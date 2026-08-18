@@ -216,3 +216,28 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Vivado / Xilinx FPGA build artifacts
+vivado_project/
+*.jou
+*.str
+*.wdb
+*.pb
+.Xil/
+.Xilinx/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+*.srcs/
+webtalk*.log
+webtalk*.jou
+vivado*.log
+vivado*.jou
+xvlog.log
+xvlog.pb
+xelab.log
+xelab.pb
+xsim.log
+
