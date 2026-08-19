@@ -1,0 +1,55 @@
+# create_project.tcl
+#
+# Builds the AX7010 Text Mode Display project as a Vivado project.
+#
+# Usage:
+#   From a shell:            vivado -mode batch -source scripts/create_project.tcl
+#   From the Vivado Tcl console (cwd = project02_textmode/):
+#                             source scripts/create_project.tcl
+#
+# This only creates the project and adds sources/constraints/IP - it does not
+# run synthesis. Open the project in the Vivado GUI afterwards and run
+# Synthesis -> Implementation -> Generate Bitstream, then use Hardware
+# Manager to program the board.
+
+set script_dir [file normalize [file dirname [info script]]]
+set repo_dir   [file normalize [file join $script_dir ..]]
+set proj_name  "ax7010_textmode"
+set proj_dir   [file join $repo_dir "vivado_project"]
+
+create_project -force $proj_name $proj_dir -part xc7z010clg400-1
+
+# ---------------------------------------------------------------------------
+# Design sources (pure Verilog)
+# ---------------------------------------------------------------------------
+add_files -fileset sources_1 [glob $repo_dir/hdl/*.v]
+
+set_property top top [current_fileset]
+
+# ---------------------------------------------------------------------------
+# Constraints
+# ---------------------------------------------------------------------------
+add_files -fileset constrs_1 [glob $repo_dir/constraints/*.xdc]
+
+# ---------------------------------------------------------------------------
+# Pixel-clock generator: 50 MHz sys_clk -> 25.175 MHz pixel clock (VESA
+# 640x480@60) + 125.875 MHz (5x) serial clock for TMDS serialization. Only
+# the requested frequencies are set; Vivado's Clocking Wizard solves the
+# MMCM multiply/divide values itself and keeps the two outputs in an exact
+# 5:1 ratio (both derived from the same VCO with integer dividers).
+# ---------------------------------------------------------------------------
+create_ip -name clk_wiz -vendor xilinx.com -library ip -version 6.0 -module_name clk_wiz_video
+set_property -dict [list \
+  CONFIG.PRIM_IN_FREQ {50} \
+  CONFIG.NUM_OUT_CLKS {2} \
+  CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {25.175} \
+  CONFIG.CLKOUT2_USED {true} \
+  CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {125.875} \
+] [get_ips clk_wiz_video]
+generate_target {instantiation_template} \
+  [get_files $proj_dir/$proj_name.srcs/sources_1/ip/clk_wiz_video/clk_wiz_video.xci]
+
+update_compile_order -fileset sources_1
+
+puts "Project '$proj_name' created at $proj_dir"
+puts "Open it in Vivado, then run Synthesis -> Implementation -> Generate Bitstream."

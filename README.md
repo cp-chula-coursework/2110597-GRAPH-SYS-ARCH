@@ -86,6 +86,34 @@ speedup) was verified in Icarus Verilog simulation before targeting
 hardware. See [`project01_pong/README.md`](project01_pong/README.md) for
 controls, build steps, and current hardware bring-up / submission status.
 
+### `project02_textmode/` - Text mode display
+
+The second graded assignment, based on the "Text Mode" lecture (how
+terminals and early micros drew text: a font ROM holding the character
+glyphs, a tile RAM saying which character sits in each grid cell, and a
+pixel pipeline looking up both per pixel). The brief asks for an interactive
+text-mode demo with keyboard input.
+
+This implementation is an 80x30 character display (8x16 glyphs, classic IBM
+VGA font, 640x480@60 over the same HDMI pipeline) running two of the
+brief's suggested demos in one design:
+
+- **Text editor** - arcade-style: a blinking block cursor moves over the
+  grid and two buttons cycle the character under it, with typematic
+  auto-repeat and a hold-to-clear combo.
+- **Matrix screensaver** - after ~20 s idle, digital rain (80 independent
+  LFSR-driven streams with bright heads) takes over; any press returns to
+  the editor with the text intact, since the rain animates in its own
+  separate tile RAM.
+
+Board adaptations: VGA -> HDMI as usual, and - since the AX7010 has no
+keyboard connector - the reference design's PS/2 input stage becomes the 4
+push buttons. The full core (everything except the clocking IP and TMDS
+serializers) is covered by an Icarus Verilog testbench that renders real
+frames to image files and scripts button presses through the debouncer. See
+[`project02_textmode/README.md`](project02_textmode/README.md) for
+controls, architecture, and build steps.
+
 ## Building any project
 
 Each project is built the same way, with Vivado on your `PATH`:
