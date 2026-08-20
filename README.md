@@ -114,6 +114,42 @@ frames to image files and scripts button presses through the debouncer. See
 [`project02_textmode/README.md`](project02_textmode/README.md) for
 controls, architecture, and build steps.
 
+### `project03_platformer/` - Background tile: 2D platformer
+
+The third graded assignment, based on the "2D Platformer on FPGA" lecture
+(how NES/SNES-era consoles drew scrolling worlds: a map ROM saying which
+tile fills each cell, a tile ROM holding the tile pixels, a sprite ROM +
+window-test renderer for the player, and a hardwired state machine for the
+game logic - still no CPU, no software). The brief covers the lecture's
+sections up through scrolling and the single-sprite renderer, plus "use
+state machine to do simple game logic"; the multi-sprite/line-buffer PPU is
+the *next* assignment.
+
+This implementation is a playable mini platformer (640x480@60 over the same
+HDMI pipeline):
+
+- **Scrolling tile world** - 80x30 map (2 screens wide, x-axis scrolling
+  per the slides), 32-tile 16x16 tileset; tile index bit 4 doubles as the
+  collision "solid" attribute.
+- **Player sprite** - 32x32, 4 frames (idle / 2-frame walk / jump), mirrored
+  when facing left, white-as-transparent, per the slides' sprite renderer.
+  Original art, generated (with the whole tileset and level) by a Python
+  script into plain Verilog ROMs.
+- **Game state machine** - gravity with variable-height jumps, walk/run,
+  map collision through a second map-ROM instance (the slides' `coll_rom`),
+  pits that respawn the player, and a camera that follows - one FSM run
+  during each vertical blanking interval.
+
+Board adaptations: VGA -> HDMI as usual, buttons as the controller, and the
+whole pipeline at the pixel clock (the slides' 2-clock BRAM latency is
+absorbed by delaying the sync flags to match). The full core is covered by
+an Icarus Verilog testbench in which an auto-runner *plays the level* -
+walking, jumping crates/pit/pipe, dying, respawning - while per-frame
+camera/animation invariants are checked and real rendered frames are dumped
+to image files. See
+[`project03_platformer/README.md`](project03_platformer/README.md) for
+controls, architecture, and build steps.
+
 ## Building any project
 
 Each project is built the same way, with Vivado on your `PATH`:
