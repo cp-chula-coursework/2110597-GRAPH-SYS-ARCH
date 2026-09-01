@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Coursework for **2110597 (Graphics System Architecture)**, Chulalongkorn University. The course teaches FPGA graphics-pipeline design through the history of game consoles - each project recreates a console generation's hardwired (no CPU, no software) graphics hardware in Verilog, targeting real hardware.
 
-Layout: each subfolder is a self-contained Vivado project (`hdl/`, `constraints/`, `scripts/create_project.tcl`, own `README.md`). Non-graded exploratory work uses plain folder names (`demo_test_pattern/`); graded assignments follow `projectNN_<name>` (e.g. `project01_pong`, next would be `project02_...`) - always use this convention for new graded projects, never `pong/`, `01_pong/`, etc.
+Layout: each subfolder is a self-contained Vivado project (`hdl/`, `constraints/`, `scripts/create_project.tcl`, own `README.md`). Non-graded exploratory work uses plain folder names (`demo_test_pattern/`); graded assignments follow `projectNN_<name>` (e.g. `project01_pong`, next would be `project04_...`) - always use this convention for new graded projects, never `pong/`, `01_pong/`, etc. A second, independent take on an assignment already done gets a letter suffix instead of a new number (`project01b_soulbattle` is a second submission for the same 1st-gen console brief as `project01_pong`).
 
 See the root [`README.md`](README.md) for a per-project walkthrough.
 
