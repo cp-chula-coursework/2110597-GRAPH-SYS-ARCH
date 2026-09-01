@@ -28,10 +28,18 @@
 // Button map (all four are needed for four-way movement, so there is no
 // spare reset key - the battle restarts from the attract screen instead):
 //   key[0] = up   key[1] = down   key[2] = left   key[3] = right
+//
+// A PlayStation controller can be plugged into the expansion header as well.
+// It is polled once per frame by ps2_pad and simply ORed in with the board's
+// buttons, so either input plays the game and neither has to be there.
 //------------------------------------------------------------------------------
 module battle_core (
     input  wire       clk,          // 25.175 MHz pixel clock
     input  wire [3:0] key,          // active-low push buttons
+    input  wire       ps2_dat,      // PlayStation controller (optional)
+    output wire       ps2_att,
+    output wire       ps2_clk,
+    output wire       ps2_cmd,
     output wire [7:0] vid_r,
     output wire [7:0] vid_g,
     output wire [7:0] vid_b,
@@ -87,6 +95,33 @@ module battle_core (
         .pressed (pad)
     );
 
+    // one transaction per frame, in the same vertical blanking the game
+    // logic runs in - the result is ready long before the next frame needs it
+    wire ps2_up, ps2_dn, ps2_lf, ps2_rt, ps2_ok;
+
+    ps2_pad u_ps2 (
+        .clk       (clk),
+        .poll      (frame_start),
+        .ps2_att   (ps2_att),
+        .ps2_clk   (ps2_clk),
+        .ps2_cmd   (ps2_cmd),
+        .ps2_dat   (ps2_dat),
+        .pad_up    (ps2_up),
+        .pad_down  (ps2_dn),
+        .pad_left  (ps2_lf),
+        .pad_right (ps2_rt),
+        .pad_ok    (ps2_ok),
+        .present   ()          // nothing on screen depends on it
+    );
+
+    // either input device drives the game; the d-pad and the buttons are the
+    // same four signals as far as everything downstream is concerned
+    wire in_up = pad[0] | ps2_up;
+    wire in_dn = pad[1] | ps2_dn;
+    wire in_lf = pad[2] | ps2_lf;
+    wire in_rt = pad[3] | ps2_rt;
+    wire in_ok = ps2_ok;
+
     // ---- game state (updated during vblank only) ---------------------------
     wire [2:0] state;
     wire [9:0] timer;
@@ -110,10 +145,11 @@ module battle_core (
     ) u_logic (
         .clk           (clk),
         .frame_start   (frame_start),
-        .pad_up        (pad[0]),
-        .pad_dn        (pad[1]),
-        .pad_lf        (pad[2]),
-        .pad_rt        (pad[3]),
+        .pad_up        (in_up),
+        .pad_dn        (in_dn),
+        .pad_lf        (in_lf),
+        .pad_rt        (in_rt),
+        .pad_ok        (in_ok),
         .blast_hit     (blast_hit),
         .blast_busy    (blast_busy),
         .state         (state),

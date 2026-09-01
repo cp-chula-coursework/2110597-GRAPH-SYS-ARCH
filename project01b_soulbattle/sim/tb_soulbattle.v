@@ -41,8 +41,12 @@ module tb_soulbattle;
     wire       vid_hs, vid_vs, vid_de;
 
     battle_core dut (
-        .clk    (clk),
-        .key    (key),
+        .clk     (clk),
+        .key     (key),
+        .ps2_dat (1'b1),        // no controller: DAT idles high on its pull-up
+        .ps2_att (),
+        .ps2_clk (),
+        .ps2_cmd (),
         .vid_r  (vid_r),
         .vid_g  (vid_g),
         .vid_b  (vid_b),

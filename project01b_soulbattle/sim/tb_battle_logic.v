@@ -31,7 +31,8 @@
 //   - every live bullet stays inside the spawn/despawn window
 //   - the attack cursor stays inside the box, and a bullseye press really
 //     does score 16 while an edge press scores 3
-//   - the four-way movement clamps against all four walls
+//   - the four-way movement clamps against all four walls, and the gamepad's
+//     separate confirm button works without being one of them
 //   - the blaster wave fires no bullets at all, hits a soul that stands
 //     still, and does not hand the turn back while a blaster is on screen
 //
@@ -54,6 +55,7 @@ module tb_battle_logic;
 
     reg clk = 1'b0;
     reg pad_up = 1'b0, pad_dn = 1'b0, pad_lf = 1'b0, pad_rt = 1'b0;
+    reg pad_ok = 1'b0;    // a gamepad's confirm button
 
     // synthetic frame tick: one pulse every 20 clocks
     reg [7:0] fcnt = 8'd0;
@@ -86,6 +88,7 @@ module tb_battle_logic;
         .pad_dn        (pad_dn),
         .pad_lf        (pad_lf),
         .pad_rt        (pad_rt),
+        .pad_ok        (pad_ok),
         .blast_hit     (blast_hit),
         .blast_busy    (blast_busy),
         .state         (state),
@@ -171,6 +174,18 @@ module tb_battle_logic;
     task arm;
         begin
             pad_up = 1'b0; pad_dn = 1'b0; pad_lf = 1'b0; pad_rt = 1'b0;
+            pad_ok = 1'b0;
+            next_frame;
+        end
+    endtask
+
+    // confirm with a gamepad button instead of a direction
+    task tap_ok;
+        begin
+            arm;
+            pad_ok = 1'b1;
+            next_frame;
+            pad_ok = 1'b0;
             next_frame;
         end
     endtask
@@ -204,6 +219,7 @@ module tb_battle_logic;
     task release_pads;
         begin
             pad_up = 1'b0; pad_dn = 1'b0; pad_lf = 1'b0; pad_rt = 1'b0;
+            pad_ok = 1'b0;
         end
     endtask
 
@@ -374,8 +390,8 @@ module tb_battle_logic;
         check(player_hp == 6'd40 && enemy_hp == 7'd120, "HP not initialised");
         check(bullet_active == 8'd0, "bullets live on the title screen");
 
-        tap;
-        check(state == S_AIM, "a button press did not start the battle");
+        tap_ok;
+        check(state == S_AIM, "the gamepad confirm button did not start the battle");
 
         // ---- phase B: win the battle on bullseye strikes -------------------
         // 120 enemy HP at 16 a strike is eight of them, so a won battle now

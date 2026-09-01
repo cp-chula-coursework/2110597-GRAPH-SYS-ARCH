@@ -15,11 +15,17 @@
 // hdmi_tx       : RGB -> TMDS encode + OSERDES serialize (pure Verilog)
 //
 // The board's 4 push buttons (key[0..3]) are active-low; battle_core
-// synchronizes and debounces them internally.
+// synchronizes and debounces them internally. A PlayStation controller can
+// also be wired to the expansion header - see the README for pins; with
+// nothing plugged in those pins just idle and the buttons still play.
 //------------------------------------------------------------------------------
 module top(
     input  wire sys_clk,           // 50 MHz onboard oscillator
     input  wire [3:0] key,         // key[0]=up key[1]=down key[2]=left key[3]=right, active-low
+    input  wire ps2_dat,           // PlayStation controller on the expansion header
+    output wire ps2_att,
+    output wire ps2_clk,
+    output wire ps2_cmd,
     output wire hdmi_oen,
     output wire TMDS_clk_p,
     output wire TMDS_clk_n,
@@ -43,8 +49,12 @@ clk_wiz_video u_clk_wiz (
 );
 
 battle_core u_core (
-    .clk    (pixel_clk),
-    .key    (key),
+    .clk     (pixel_clk),
+    .key     (key),
+    .ps2_dat (ps2_dat),
+    .ps2_att (ps2_att),
+    .ps2_clk (ps2_clk),
+    .ps2_cmd (ps2_cmd),
     .vid_r  (vid_r),
     .vid_g  (vid_g),
     .vid_b  (vid_b),

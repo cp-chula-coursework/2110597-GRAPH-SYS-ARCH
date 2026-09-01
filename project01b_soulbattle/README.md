@@ -76,6 +76,77 @@ screen instead.
 | key[2] | T17 | Move left  / confirm                              |
 | key[3] | R17 | Move right / confirm                              |
 
+### PlayStation controller (optional)
+
+A PSX/PS2 controller can be wired to the expansion header and used instead of
+- or alongside - the buttons. `ps2_pad.v` polls it once per frame and simply
+ORs the result in with the board buttons, so neither input has to be present
+and both work at the same time.
+
+| Controller            | Game                                             |
+|-----------------------|--------------------------------------------------|
+| D-pad                 | Move the soul in four directions                 |
+| Left stick            | The same, with a 25% deadzone (analog mode only) |
+| X / O / triangle / square | Confirm - start, strike, continue            |
+| START                 | Confirm                                          |
+
+Unlike the board buttons, the controller has a confirm button that is *not*
+one of the directions, which is what `pad_ok` in `battle_logic.v` is for.
+
+Wiring, in the order the pins sit in the connector:
+
+| Wire   | Signal      | Direction   | Connect to        | Package pin |
+|--------|-------------|-------------|-------------------|-------------|
+| brown  | DATA        | pad -> FPGA | `IO2_2N`          | F20         |
+| orange | COMMAND     | FPGA -> pad | `IO2_1N`          | F17         |
+| purple | 7V rumble   | -           | leave unconnected | -           |
+| black  | GND         | -           | header GND        | -           |
+| red    | 3.3V        | -           | header 3V3        | -           |
+| yellow | ATTENTION   | FPGA -> pad | `IO2_2P`          | F19         |
+| blue   | CLOCK       | FPGA -> pad | `IO2_1P`          | F16         |
+| green  | ACKNOWLEDGE | -           | leave unconnected | -           |
+
+If you are using one of the small breakout boards that turns the controller
+socket into a 6-pin SPI header, those six pins are exactly the four signals
+above plus power - it has already dropped the two wires this design leaves
+unconnected:
+
+| Board pin        | Connect to | Package pin |
+|------------------|------------|-------------|
+| `DAT` / `DI`     | `ps2_dat`  | F20         |
+| `CMD` / `DO`     | `ps2_cmd`  | F17         |
+| `CS` / `ATT`     | `ps2_att`  | F19         |
+| `CLK` / `SCK`    | `ps2_clk`  | F16         |
+| `VCC`            | header 3V3 | -           |
+| `GND`            | header GND | -           |
+
+**Power those boards from 3.3V, not 5V.** They are usually passive breakouts
+with no level shifting, so a 5V supply puts 5V back on DATA, and the Zynq's
+IO is not 5V tolerant. The controller itself is a 3.3V device and is happy
+on 3.3V.
+
+`DI`/`DO` labelling on these boards is ambiguous - some name the lines from
+the controller's point of view and some from the host's. Go by direction
+rather than by name: the line the FPGA drives is `ps2_cmd`, the line the
+controller drives is `ps2_dat`. If a board does not respond, swapping those
+two is the first thing to try.
+
+Notes:
+
+- The package pins are what the XDC constrains; which physical pin of the
+  expansion header carries `IO2_1P` and friends is in the ALINX schematic -
+  check it before wiring, and edit
+  [`constraints/ax7010_soulbattle.xdc`](constraints/ax7010_soulbattle.xdc)
+  if you would rather use other pins. Any four free 3.3V IO will do.
+- **DATA is open drain** and needs a pull-up to 3.3V. The XDC turns on the
+  FPGA's internal one, which is enough for a short lead; add an external 1k
+  for a full-length controller cable.
+- **ACKNOWLEDGE is not used.** It exists so the host knows the controller has
+  kept up; `ps2_pad` instead leaves a 16 us gap between bytes, which is
+  longer than the controller's worst case, so the wire can stay unconnected.
+- **Do not connect the 7V rumble line.** Nothing here drives the motors, and
+  the expansion header has no 7V rail anyway.
+
 ## How the battle plays
 
 ```
@@ -200,6 +271,7 @@ available; it uses one), so the renderers never see state change mid-frame.
 | `soul_rom.v`, `monster_rom.v`, `blaster_rom.v` | generated art (`scripts/gen_assets.py`) |
 | `font_rom.v` | 8x16 ASCII font, reused verbatim from project02_textmode |
 | `pad_input.v` | 4-button synchronizer + debouncer, as in project03 |
+| `ps2_pad.v` | PlayStation controller host: SPI mode 3, LSB first, one poll per frame |
 | `vga_timing.v`, `hdmi_tx.v`, `tmds_encoder.v`, `oserdes_tmds.v` | unchanged from project01 |
 
 Notes on the design decisions a hardwired console forces:
@@ -238,6 +310,13 @@ Notes on the design decisions a hardwired console forces:
 - **The blasters composite above the HUD** on purpose: a skull that comes in
   over the top edge passes in front of the enemy's name and HP bar for the
   second it is on screen.
+- **The controller is polled in vertical blanking**, on the same `frame_start`
+  tick the game logic runs on. A whole transaction is about 12,600 pixel
+  clocks against the 420,000 in a frame, so it is finished long before the
+  next frame wants it, and the game never has to wait on a serial bus. The
+  controller's own reply decides how long the transaction is: the low nibble
+  of its ID byte is the number of 16-bit words it is about to send, so a
+  digital pad takes 5 bytes and an analog one 9, with nothing hardwired.
 
 ## Art
 
@@ -275,6 +354,14 @@ Before targeting hardware:
   wave fires no bullets at all, that a soul standing still is hit by a beam
   for 3 HP, and that the turn is not handed back while a blaster is still on
   screen.
+- `sim/tb_ps2_pad.v` puts a model of a real controller on the other end of
+  the wire - it shifts its answer out on each falling clock edge and latches
+  the host's command on each rising one, exactly as the hardware does. It
+  checks the command bytes (01, 42, then filler, LSB first), that the ID's
+  low nibble really does set the transaction length (5 bytes digital, 9
+  analog), the d-pad and face buttons, the left stick with its deadzone, that
+  an unplugged socket reports nothing at all so the board buttons stay in
+  charge, and that plugging back in recovers.
 - `sim/tb_blaster.v` drives `blaster_logic` directly, which is what makes the
   aiming geometry checkable exactly rather than by eye: with the soul held
   still, the ray from every live muzzle passes precisely through the soul's
@@ -302,6 +389,9 @@ iverilog -o /tmp/tb_logic.vvp hdl/battle_logic.v hdl/blaster_logic.v \
   sim/tb_battle_logic.v
 vvp /tmp/tb_logic.vvp
 
+iverilog -o /tmp/tb_ps2.vvp hdl/ps2_pad.v sim/tb_ps2_pad.v
+vvp /tmp/tb_ps2.vvp
+
 iverilog -o /tmp/tb_blaster.vvp hdl/blaster_logic.v sim/tb_blaster.v
 vvp /tmp/tb_blaster.vvp
 
@@ -312,8 +402,8 @@ vvp /tmp/tb_bd.vvp     # writes soulbattle_blaster.ppm
 iverilog -o /tmp/tb_sb.vvp hdl/vga_timing.v hdl/pad_input.v hdl/soul_rom.v \
   hdl/monster_rom.v hdl/blaster_rom.v hdl/font_rom.v hdl/soul_renderer.v \
   hdl/monster_renderer.v hdl/bullet_renderer.v hdl/blaster_renderer.v \
-  hdl/hud_renderer.v hdl/battle_logic.v hdl/blaster_logic.v hdl/battle_core.v \
-  sim/tb_soulbattle.v
+  hdl/hud_renderer.v hdl/battle_logic.v hdl/blaster_logic.v hdl/ps2_pad.v \
+  hdl/battle_core.v sim/tb_soulbattle.v
 vvp /tmp/tb_sb.vvp     # slow: real frames, writes soulbattle_*.ppm
 ```
 

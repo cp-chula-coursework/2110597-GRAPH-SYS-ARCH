@@ -55,6 +55,7 @@ module battle_logic #(
     input  wire        pad_dn,
     input  wire        pad_lf,
     input  wire        pad_rt,
+    input  wire        pad_ok,       // confirm - a gamepad has a button for it
     input  wire        blast_hit,    // a blaster beam is on the soul
     input  wire        blast_busy,   // a blaster is still on screen
 
@@ -126,7 +127,10 @@ module battle_logic #(
     reg cursor_dir = 1'b0;   // attack cursor: 0 = sweeping right, 1 = left
 
     // ---- button edge (sampled once per frame) ------------------------------
-    wire pad_any = pad_up | pad_dn | pad_lf | pad_rt;
+    // Any direction still confirms, because the board's four buttons are all
+    // there is without a controller plugged in; a controller adds a button
+    // that only confirms.
+    wire pad_any = pad_up | pad_dn | pad_lf | pad_rt | pad_ok;
     reg  pad_any_d = 1'b0;
     wire press = pad_any & ~pad_any_d;
 
