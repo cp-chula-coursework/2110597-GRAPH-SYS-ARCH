@@ -63,6 +63,7 @@ module blaster_renderer #(
     input  wire [NBLAST*2-1:0]  bl_dim,
     input  wire [NBLAST-1:0]    bl_hot,
     input  wire [NBLAST-1:0]    bl_head,
+    input  wire                 red,     // draw the crimson one instead
     output reg  [11:0] color,        // valid 2 clocks after x/y
     output reg         visible
 );
@@ -78,6 +79,15 @@ module blaster_renderer #(
     localparam [11:0] C_BEAM_CORE = 12'hFFF;   // white-hot centre
     localparam [11:0] C_BEAM_EDGE = 12'hBDF;   // cooler blue fringe
     localparam [11:0] C_WARN      = 12'hEEF;   // the thin warning line
+
+    // the crimson wave's beam, in the same three parts
+    localparam [11:0] C_RED_CORE  = 12'hF99;
+    localparam [11:0] C_RED_EDGE  = 12'hC00;
+    localparam [11:0] C_RED_WARN  = 12'hF44;
+
+    wire [11:0] beam_core = red ? C_RED_CORE : C_BEAM_CORE;
+    wire [11:0] beam_edge = red ? C_RED_EDGE : C_BEAM_EDGE;
+    wire [11:0] beam_warn = red ? C_RED_WARN : C_WARN;
 
     wire in_box = (x >= INNER_L) && (x <= INNER_R) &&
                   (y >= INNER_T) && (y <= INNER_B);
@@ -118,8 +128,8 @@ module blaster_renderer #(
                                 (down <= $signed({3'd0, rchg}));
 
             assign beam_col[12*g +: 12] =
-                ~bl_hot[g]                        ? C_WARN :
-                (aabs <= $signed({6'd0, core}))   ? C_BEAM_CORE : C_BEAM_EDGE;
+                ~bl_hot[g]                        ? beam_warn :
+                (aabs <= $signed({6'd0, core}))   ? beam_core : beam_edge;
 
             // ---- the skull's 64x64 cell -------------------------------------
             // The muzzle sits at a different corner or edge of the cell for
@@ -222,23 +232,37 @@ module blaster_renderer #(
     reg        beam_hit_d1   = 1'b0;
     reg        head_on_d1    = 1'b0;
     reg [1:0]  head_dim_d1   = 2'd0;
+    reg        red_d1        = 1'b0;
 
     always @(posedge clk) begin
         beam_color_d1 <= beam_color;
         beam_hit_d1   <= beam_hit;
         head_on_d1    <= sel_on;
         head_dim_d1   <= sel_dim;
+        red_d1        <= red;        // rides the ROM's own clock of delay
     end
+
+    // The crimson skull is the same ROM read through a filter rather than a
+    // second set of art: take whichever channel is brightest as the strength
+    // of the pixel and put it in red. Bone comes out red, the glowing eyes
+    // come out brighter red, and the dark outline stays dark - the shape and
+    // shading survive, only the hue changes.
+    wire [3:0] rom_r = rom_color[11:8], rom_g = rom_color[7:4],
+               rom_b = rom_color[3:0];
+    wire [3:0] rom_rg = (rom_r > rom_g) ? rom_r : rom_g;
+    wire [3:0] rom_v  = (rom_rg > rom_b) ? rom_rg : rom_b;
+    wire [11:0] rom_shown = red_d1 ? {rom_v, rom_v >> 2, rom_v >> 2}
+                                   : rom_color;
 
     // fade by halving each colour channel, which on 4-bit channels is a shift
     wire [11:0] head_color =
-        (head_dim_d1 == 2'd0) ? rom_color :
-        (head_dim_d1 == 2'd1) ? {1'b0, rom_color[11:9],
-                                 1'b0, rom_color[ 7:5],
-                                 1'b0, rom_color[ 3:1]}
-                              : {2'b0, rom_color[11:10],
-                                 2'b0, rom_color[ 7:6],
-                                 2'b0, rom_color[ 3:2]};
+        (head_dim_d1 == 2'd0) ? rom_shown :
+        (head_dim_d1 == 2'd1) ? {1'b0, rom_shown[11:9],
+                                 1'b0, rom_shown[ 7:5],
+                                 1'b0, rom_shown[ 3:1]}
+                              : {2'b0, rom_shown[11:10],
+                                 2'b0, rom_shown[ 7:6],
+                                 2'b0, rom_shown[ 3:2]};
 
     wire head_px = head_on_d1 && (rom_color != 12'hFFF);
 

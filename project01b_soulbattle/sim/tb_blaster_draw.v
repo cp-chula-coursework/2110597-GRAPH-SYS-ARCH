@@ -14,6 +14,8 @@
 //   soulbattle_blaster.ppm    4 beams firing (wide), 4 warning lines (thin),
 //                             all eight skull orientations, the box frame and
 //                             a red marker where the soul is
+//   soulbattle_blaster_red.ppm       the crimson wave's blaster, firing
+//   soulbattle_blaster_red_warn.ppm  and the warning it gives first
 //   soulbattle_blaster_growing.ppm
 //                             the same eight, one frame into firing (reach =
 //                             72 px, one REACH_STEP): every beam is still
@@ -58,8 +60,10 @@ module tb_blaster_draw;
     wire [11:0] bcolor;
     wire        bvis;
 
+    reg red = 1'b0;
+
     blaster_renderer #(.NBLAST (NB)) u_draw (
-        .clk (clk), .x (x), .y (y),
+        .clk (clk), .x (x), .y (y), .red (red),
         .bl_mx (bl_mx), .bl_my (bl_my), .bl_dir (bl_dir), .bl_hw (bl_hw),
         .bl_reach (bl_reach), .bl_kick (bl_kick), .bl_dim (bl_dim),
         .bl_hot (bl_hot), .bl_head (bl_head),
@@ -199,6 +203,16 @@ module tb_blaster_draw;
         bl_head[7] = 1'b0;                // the eighth has not appeared yet
 
         dump("soulbattle_blaster_ring.ppm");
+
+        // ---- the crimson one: alone, and about to fire ---------------------
+        bl_head = 8'h00;  bl_hw = 40'd0;  bl_hot = 8'h00;
+        red = 1'b1;
+        place_hw(0, D_SE, 9, 1, 1023);        // firing
+        dump("soulbattle_blaster_red.ppm");
+
+        bl_head = 8'h00;  bl_hw = 40'd0;  bl_hot = 8'h00;
+        place_hw(0, D_SE, 1, 0, 1023);        // its warning line
+        dump("soulbattle_blaster_red_warn.ppm");
         $finish;
     end
 

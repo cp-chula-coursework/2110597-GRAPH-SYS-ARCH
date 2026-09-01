@@ -35,6 +35,8 @@
 //     separate confirm button works without being one of them
 //   - the blaster waves fire no bullets at all, hit a soul that stands
 //     still, and do not hand the turn back while a blaster is on screen
+//   - the crimson wave's beam ends the battle outright rather than taking
+//     HP, whatever the soul had left and whatever the mercy window says
 //
 //   iverilog -o /tmp/tb_logic.vvp hdl/battle_logic.v hdl/blaster_logic.v \
 //     sim/tb_battle_logic.v
@@ -90,6 +92,7 @@ module tb_battle_logic;
         .pad_rt        (pad_rt),
         .pad_ok        (pad_ok),
         .blast_hit     (blast_hit),
+        .blast_kill    (blast_kill),
         .blast_busy    (blast_busy),
         .state         (state),
         .timer         (timer),
@@ -116,10 +119,12 @@ module tb_battle_logic;
     wire [9:0]  bl_hw;
     wire [3:0]  bl_dim;
     wire [1:0]  bl_hot, bl_head;
-    wire        blast_hit, blast_busy;
+    wire        blast_hit, blast_kill, blast_busy;
 
     wire blast_ring  = (wave == 3'd4);
-    wire blast_run   = (state == S_DODGE) && ((wave == 3'd3) || blast_ring);
+    wire blast_red   = (wave == 3'd5);
+    wire blast_run   = (state == S_DODGE) &&
+                       ((wave == 3'd3) || blast_ring || blast_red);
     wire blast_spawn = blast_run && (timer < 10'd330);
 
     blaster_logic blast (
@@ -128,6 +133,7 @@ module tb_battle_logic;
         .run         (blast_run),
         .spawn_en    (blast_spawn),
         .ring        (blast_ring),
+        .red         (blast_red),
         .soul_x      (soul_x),
         .soul_y      (soul_y),
         .round_cnt   (round_cnt),
@@ -141,6 +147,7 @@ module tb_battle_logic;
         .bl_hot      (bl_hot),
         .bl_head     (bl_head),
         .blast_hit   (blast_hit),
+        .blast_kill  (blast_kill),
         .blast_busy  (blast_busy)
     );
 
@@ -228,8 +235,58 @@ module tb_battle_logic;
     task dodge_step;
         integer j, bcx, bcy, d, best_d, best_c;
         integer best_axis;          // 0 = dodge sideways, 1 = dodge vertically
+        integer beam_px, beam_py, perp, aperp, sgn;
+        integer bst, bdr, bmx, bmy, sdx, sdy;
         reg [1:0] ty;
         begin
+            // ---- beams first ------------------------------------------------
+            // A beam that has locked on is aimed straight at wherever the soul
+            // was standing, so the only way out is sideways. The distance
+            // across the beam is the same expression the hardware draws it
+            // with; move to make it bigger. Beams come before bullets here
+            // because one of these waves kills outright.
+            beam_px = 0;
+            beam_py = 0;
+            for (j = 0; j < 2; j = j + 1) begin
+                bst = (j == 0) ? blast.st[0] : blast.st[1];
+                bdr = (j == 0) ? blast.dr[0] : blast.dr[1];
+                bmx = (j == 0) ? blast.mx[0] : blast.mx[1];
+                bmy = (j == 0) ? blast.my[0] : blast.my[1];
+                if (bst == 2 || bst == 3) begin        // charging or firing
+                    sdx = (soul_x + 8) - bmx;
+                    sdy = (soul_y + 8) - bmy;
+                    case (bdr)
+                    0, 4: perp = sdx;                  // beam runs vertically
+                    2, 6: perp = sdy;                  // ... horizontally
+                    1, 5: perp = sdx - sdy;            // ... on a diagonal
+                    default: perp = sdx + sdy;
+                    endcase
+                    aperp = (perp < 0) ? -perp : perp;
+                    if (aperp < 36) begin
+                        sgn = (perp >= 0) ? 1 : -1;
+                        case (bdr)
+                        0, 4: beam_px = beam_px + sgn;
+                        2, 6: beam_py = beam_py + sgn;
+                        1, 5: begin beam_px = beam_px + sgn;
+                                    beam_py = beam_py - sgn; end
+                        default: begin beam_px = beam_px + sgn;
+                                       beam_py = beam_py + sgn; end
+                        endcase
+                    end
+                end
+            end
+
+            if (beam_px != 0 || beam_py != 0) begin
+                release_pads;
+                pad_lf = (beam_px < 0);  pad_rt = (beam_px > 0);
+                pad_up = (beam_py < 0);  pad_dn = (beam_py > 0);
+                if (soul_x <= SOUL_MIN_X + 6 && pad_lf) begin pad_lf=0; pad_rt=1; end
+                if (soul_x >= SOUL_MAX_X - 6 && pad_rt) begin pad_rt=0; pad_lf=1; end
+                if (soul_y <= SOUL_MIN_Y + 6 && pad_up) begin pad_up=0; pad_dn=1; end
+                if (soul_y >= SOUL_MAX_Y - 6 && pad_dn) begin pad_dn=0; pad_up=1; end
+                disable dodge_step;
+            end
+
             best_d    = 100000;
             best_axis = -1;
             best_c    = 0;
@@ -265,7 +322,23 @@ module tb_battle_logic;
             end
 
             release_pads;
-            if (best_axis == 0) begin
+            if (best_axis == -1) begin
+                // Nothing incoming, which on a blaster wave means the box is
+                // empty of bullets rather than safe: those beams lock on to
+                // wherever the soul is standing, so standing anywhere is the
+                // one thing that does not work. Walk a slow square instead,
+                // turning away from a wall rather than pressing into it.
+                case ((frame_no / 24) % 4)
+                0: pad_lf = 1'b1;
+                1: pad_up = 1'b1;
+                2: pad_rt = 1'b1;
+                default: pad_dn = 1'b1;
+                endcase
+                if (soul_x <= SOUL_MIN_X + 6) begin pad_lf = 0; pad_rt = 1; end
+                if (soul_x >= SOUL_MAX_X - 6) begin pad_rt = 0; pad_lf = 1; end
+                if (soul_y <= SOUL_MIN_Y + 6) begin pad_up = 0; pad_dn = 1; end
+                if (soul_y >= SOUL_MAX_Y - 6) begin pad_dn = 0; pad_up = 1; end
+            end else if (best_axis == 0) begin
                 // step out of its column, towards whichever side has more room
                 if (best_c == soul_x + 8)
                     pad_lf = (soul_x - SOUL_MIN_X > SOUL_MAX_X - soul_x);
@@ -316,7 +389,11 @@ module tb_battle_logic;
                 // the blaster waves are the only ones with no bullets in
                 // them, so `wave` alone says which kind of hit this was
                 dmg_want = (wave >= 3'd3) ? 6'd3 : 6'd2;
-                if (player_hp == 6'd0)
+                // the crimson beam does not take HP, it ends the battle, so
+                // any drop straight to zero during that wave is expected
+                if (wave == 3'd5 && player_hp == 6'd0)
+                    check(state == S_LOSE, "a crimson hit did not end the battle");
+                else if (player_hp == 6'd0)
                     // the killing blow clamps at 0 rather than overshooting
                     check(hp_prev <= dmg_want, "a fatal hit skipped some HP");
                 else
@@ -375,7 +452,7 @@ module tb_battle_logic;
     integer guard;
     integer turns;
     integer sx0, sy0;
-    integer bullets_seen, blast_seen;
+    integer bullets_seen, blast_seen, kill_seen;
     reg [5:0] hp0;
 
     // ---- watchdog ---------------------------------------------------------
@@ -551,6 +628,36 @@ module tb_battle_logic;
                      blast_seen);
         end else
             $display("  ring wave: battle ended before it came round");
+
+        // ---- phase I: the crimson wave ends the battle outright -------------
+        guard = 0;
+        while (!(state == S_DODGE && wave == 3'd5) && guard < 900 &&
+               state != S_WIN && state != S_LOSE) begin
+            if (state == S_AIM) begin arm; strike; end
+            else                     play_frame;
+            guard = guard + 1;
+        end
+        if (state == S_DODGE && wave == 3'd5) begin
+            // Stand still on purpose. What is being checked is that the beam
+            // reports a kill and that the battle ends on it, not the HP
+            // arithmetic - blast_kill is the mechanism, and the per-frame
+            // invariant above already ties a drop to zero in this wave to the
+            // battle being over.
+            hp0 = player_hp;
+            kill_seen = 0;
+            guard = 0;
+            while (state == S_DODGE && guard < 900) begin
+                if (blast_kill) kill_seen = 1;
+                release_pads;
+                next_frame; guard = guard + 1;
+            end
+            check(kill_seen == 1, "the crimson beam never reported a kill");
+            check(state == S_LOSE, "the crimson beam did not end the battle");
+            check(player_hp == 6'd0, "the crimson beam left HP behind");
+            $display("  crimson wave: ended the battle from %0d HP after %0d frames",
+                     hp0, guard);
+        end else
+            $display("  crimson wave: battle ended before it came round");
 
         if (errors == 0)
             $display("ALL TESTS PASSED (%0d game frames simulated)", frame_no);

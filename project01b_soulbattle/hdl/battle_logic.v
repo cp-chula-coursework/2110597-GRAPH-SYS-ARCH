@@ -27,6 +27,8 @@
 //             wave 3 - blasters            (blaster_logic; no bullets at all)
 //             wave 4 - blasters sweeping a circle around the soul, three
 //                      times as fast (blaster_logic again, in ring mode)
+//             wave 5 - one crimson blaster at a time, slow, with a second
+//                      and a half of warning - and its beam is fatal
 //           Spawns get faster every turn (spawn_period).
 //
 //   The blaster wave is the one attack this module does not draw itself: it
@@ -59,6 +61,7 @@ module battle_logic #(
     input  wire        pad_rt,
     input  wire        pad_ok,       // confirm - a gamepad has a button for it
     input  wire        blast_hit,    // a blaster beam is on the soul
+    input  wire        blast_kill,   // ... and it was a crimson one: fatal
     input  wire        blast_busy,   // a blaster is still on screen
 
     output reg  [2:0]  state      = 3'd0,
@@ -126,6 +129,7 @@ module battle_logic #(
     localparam [9:0] CURSOR_MAX    = INNER_R - CURSOR_W;
     localparam [2:0] WAVE_BLAST    = 3'd3;   // blasters, from random sides
     localparam [2:0] WAVE_RING     = 3'd4;   // blasters, sweeping a circle
+    localparam [2:0] WAVE_RED      = 3'd5;   // one crimson blaster, fatal
 
     reg cursor_dir = 1'b0;   // attack cursor: 0 = sweeping right, 1 = left
 
@@ -361,7 +365,7 @@ module battle_logic #(
                 // 3. spawn the next bullet of this wave (the blaster wave
                 //    fires no bullets - blaster_logic owns the whole box)
                 if (timer < DODGE_FRAMES && wave != WAVE_BLAST &&
-                    wave != WAVE_RING) begin
+                    wave != WAVE_RING && wave != WAVE_RED) begin
                     if (spawn_t != 8'd0)
                         spawn_t <= spawn_t - 8'd1;
                     else begin
@@ -397,7 +401,18 @@ module battle_logic #(
                 end
 
                 // 4. contact damage (mercy invincibility gates repeats)
-                if (took_hit && iframes == 7'd0) begin
+                // The crimson beam ignores both the HP bar and the mercy
+                // window: standing in it ends the battle there and then.
+                // That is the whole point of the wave, and why it gives a
+                // second and a half of warning before it fires.
+                if (blast_kill) begin
+                    player_hp     <= 6'd0;
+                    state         <= S_LOSE;
+                    timer         <= 10'd0;
+                    bullet_active <= {NBULLET{1'b0}};
+                end
+
+                else if (took_hit && iframes == 7'd0) begin
                     if (player_hp <= took_dmg) begin
                         player_hp     <= 6'd0;
                         state         <= S_LOSE;
@@ -418,7 +433,7 @@ module battle_logic #(
                     bullet_active <= {NBULLET{1'b0}};
                     soul_x        <= SOUL_AIM_X;
                     soul_y        <= SOUL_HOME_Y;
-                    wave          <= (wave == WAVE_RING) ? 3'd0 : wave + 3'd1;
+                    wave          <= (wave == WAVE_RED) ? 3'd0 : wave + 3'd1;
                     if (round_cnt != 3'd7) round_cnt <= round_cnt + 3'd1;
                 end
             end

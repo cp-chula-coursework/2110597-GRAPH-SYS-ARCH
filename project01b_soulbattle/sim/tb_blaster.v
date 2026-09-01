@@ -20,6 +20,9 @@
 //   - a soul that stands still is hit; a soul that steps aside after the
 //     muzzle locks is not
 //   - all eight headings actually come up
+//   - the crimson wave puts only one blaster up at a time, warns for over a
+//     second before firing, and reports its hits as fatal rather than as
+//     ordinary damage
 //
 //   iverilog -o /tmp/tb_blaster.vvp hdl/blaster_logic.v sim/tb_blaster.v
 //   vvp /tmp/tb_blaster.vvp
@@ -39,7 +42,7 @@ module tb_blaster;
     localparam P_IDLE = 0, P_TRACK = 1, P_CHARGE = 2, P_FIRE = 3, P_FADE = 4;
 
     reg clk = 1'b0;
-    reg run = 1'b0, spawn_en = 1'b0, ring = 1'b0;
+    reg run = 1'b0, spawn_en = 1'b0, ring = 1'b0, red = 1'b0;
     reg [9:0] soul_x = 10'd312, soul_y = 10'd322;   // centre of the box
     reg [2:0] round_cnt = 3'd3;
 
@@ -56,7 +59,7 @@ module tb_blaster;
     wire [9:0]  bl_hw;
     wire [3:0]  bl_dim;
     wire [1:0]  bl_hot, bl_head;
-    wire        blast_hit, blast_busy;
+    wire        blast_hit, blast_kill, blast_busy;
 
     blaster_logic dut (
         .clk         (clk),
@@ -64,6 +67,7 @@ module tb_blaster;
         .run         (run),
         .spawn_en    (spawn_en),
         .ring        (ring),
+        .red         (red),
         .soul_x      (soul_x),
         .soul_y      (soul_y),
         .round_cnt   (round_cnt),
@@ -77,6 +81,7 @@ module tb_blaster;
         .bl_hot      (bl_hot),
         .bl_head     (bl_head),
         .blast_hit   (blast_hit),
+        .blast_kill  (blast_kill),
         .blast_busy  (blast_busy)
     );
 
@@ -186,7 +191,7 @@ module tb_blaster;
         $finish;
     end
 
-    integer guard, g2;
+    integer guard, g2, two_up, kill_seen;
     integer ring_step, ring_delta;
     reg [2:0] ring_prev;
     integer hit_frames;
@@ -306,6 +311,45 @@ module tb_blaster;
         $display("  ring: swept all 8 headings, step %0d, %0d frames apart",
                  ring_step, g2);
         ring = 1'b0;
+
+        // ---- the crimson wave: one at a time, slow, and fatal ---------------
+        run = 1'b0; spawn_en = 1'b0;
+        step_frames(4);
+        soul_x = 10'd312; soul_y = 10'd322;
+        aim_stable = 1'b1;
+        round_cnt = 3'd0;
+        red = 1'b1;
+        run = 1'b1; spawn_en = 1'b1;
+
+        // never two of them up at once
+        guard = 0;
+        two_up = 0;
+        while (guard < 400) begin
+            if (dut.st[0] != P_IDLE && dut.st[1] != P_IDLE) two_up = two_up + 1;
+            next_frame; guard = guard + 1;
+        end
+        check(two_up == 0, "two crimson blasters were on screen at once");
+
+        // the warning has to be long: it is all the player gets
+        guard = 0;
+        while (dut.st[0] != P_CHARGE && guard < 300) begin next_frame; guard = guard + 1; end
+        check(dut.st[0] == P_CHARGE, "no crimson blaster locked on");
+        guard = 0;
+        while (dut.st[0] == P_CHARGE && guard < 300) begin next_frame; guard = guard + 1; end
+        check(guard >= 60, "the crimson warning was under a second");
+        $display("  crimson: warning ran %0d frames", guard);
+
+        // and a hit is reported as fatal, not as ordinary damage
+        guard = 0;
+        kill_seen = 0;
+        while (guard < 60) begin
+            if (blast_hit)  check(blast_kill, "a crimson hit was not fatal");
+            if (blast_kill) kill_seen = kill_seen + 1;
+            next_frame; guard = guard + 1;
+        end
+        check(kill_seen > 0, "a stationary soul survived the crimson beam");
+
+        red = 1'b0;
 
         // ---- ending the wave clears the screen -----------------------------
         run = 1'b0; spawn_en = 1'b0;

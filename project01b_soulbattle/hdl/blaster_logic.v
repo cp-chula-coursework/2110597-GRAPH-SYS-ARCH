@@ -61,6 +61,8 @@ module blaster_logic #(
     input  wire       spawn_en,       // ... and is still inside its spawn window
     input  wire       ring,           // sweep the headings round instead of
                                       // picking each one at random
+    input  wire       red,            // the crimson one: one at a time, slow,
+                                      // and a hit is fatal outright
     input  wire [9:0] soul_x,         // soul sprite top-left
     input  wire [9:0] soul_y,
     input  wire [2:0] round_cnt,      // difficulty ramp
@@ -75,6 +77,7 @@ module blaster_logic #(
     output wire [NBLAST-1:0]    bl_hot,    // 1 = firing, 0 = warning line
     output wire [NBLAST-1:0]    bl_head,   // head on screen
     output wire                 blast_hit, // a live beam is on the soul
+    output wire                 blast_kill,// ... and it was a crimson one
     output wire                 blast_busy // something is still on screen
 );
 
@@ -113,6 +116,17 @@ module blaster_logic #(
     localparam [7:0] RING_FADE   = 8'd6;
     localparam [7:0] RING_GAP    = 8'd18;
 
+    // The crimson wave goes the other way entirely. Its beam does not take
+    // HP, it ends the battle, so everything about it is built to be seen
+    // coming: one blaster on screen at a time, a second and a half of warning
+    // line before it fires, and a long wait between them. An instant kill is
+    // only fair while it is never a surprise.
+    localparam [7:0] RED_TRACK  = 8'd40;
+    localparam [7:0] RED_CHARGE = 8'd90;    // 1.5 s of warning
+    localparam [7:0] RED_FIRE   = 8'd24;
+    localparam [7:0] RED_FADE   = 8'd14;
+    localparam [7:0] RED_GAP    = 8'd80;
+
     localparam [4:0] FULL_HW    = 5'd9;      // 19 px of beam at full width
     localparam [9:0] REACH_STEP = 10'd72;    // px/frame the beam reaches out
     localparam [9:0] REACH_MAX  = 10'd1023;
@@ -134,13 +148,15 @@ module blaster_logic #(
     // later turns give less warning and send blasters closer together
     wire [7:0] round_x2  = {4'd0, round_cnt, 1'b0};
     wire [7:0] round_x4  = {3'd0, round_cnt, 2'd0};
-    wire [7:0] charge_f  = ring ? RING_CHARGE :
+    wire [7:0] charge_f  = red  ? RED_CHARGE :
+                           ring ? RING_CHARGE :
                            (round_x2 < 8'd12) ? (8'd26 - round_x2) : 8'd14;
-    wire [7:0] gap_frames= ring ? RING_GAP :
+    wire [7:0] gap_frames= red  ? RED_GAP :
+                           ring ? RING_GAP :
                            (round_x4 < 8'd24) ? (8'd54 - round_x4) : 8'd30;
-    wire [7:0] track_f   = ring ? RING_TRACK : TRACK_F;
-    wire [7:0] fire_f    = ring ? RING_FIRE  : FIRE_F;
-    wire [7:0] fade_f    = ring ? RING_FADE  : FADE_F;
+    wire [7:0] track_f   = red ? RED_TRACK : ring ? RING_TRACK : TRACK_F;
+    wire [7:0] fire_f    = red ? RED_FIRE  : ring ? RING_FIRE  : FIRE_F;
+    wire [7:0] fade_f    = red ? RED_FADE  : ring ? RING_FADE  : FADE_F;
 
     // ---- pseudo-random source ----------------------------------------------
     // Its own LFSR, seeded differently from battle_logic's, so the side a
@@ -310,6 +326,7 @@ module blaster_logic #(
     endgenerate
 
     assign blast_hit  = |hitv;
+    assign blast_kill = red & (|hitv);
     assign blast_busy = |busyv;
 
     // ---- free slot (lowest index wins) -------------------------------------
@@ -325,6 +342,9 @@ module blaster_logic #(
                 free_ok  = 1'b1;
                 free_idx = f[IDXW-1:0];
             end
+        // the crimson one comes alone: two of a beam that kills outright
+        // would leave nowhere to stand
+        if (red && (busyv != {NBLAST{1'b0}})) free_ok = 1'b0;
     end
 
     // ---- per-frame update --------------------------------------------------

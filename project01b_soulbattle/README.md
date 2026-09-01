@@ -258,6 +258,8 @@ Notes:
   - **wave 3** - blasters (see below); this wave fires no bullets at all
   - **wave 4** - blasters again, sweeping a circle around the soul three
     times as fast
+  - **wave 5** - one crimson blaster at a time, slow and heavily telegraphed,
+    whose beam ends the battle outright
 
   Spawns get 2 frames closer together each turn, floored at 8 (`spawn_period`,
   26 frames down to 12 on the pillar wave, down to 8 on the orbs).
@@ -314,6 +316,19 @@ drawn once per turn, so it stays readable without being memorisable.
 Because the muzzle is still solved the same way, every beam in the circle
 still passes exactly through the soul - the sweep is not decoration around a
 fixed target, it is eight aimed shots in a row from eight different sides.
+
+**The crimson one.** Wave 5 goes the other way entirely. Its beam does not
+take HP, it ends the battle, so everything about it is built to be seen
+coming: one blaster on screen at a time, a second and a half of warning line
+before it fires, and a long wait between them. An instant kill is only fair
+while it is never a surprise. It ignores the mercy window too - there is no
+such thing as a graze.
+
+The red skull is the same ROM read through a filter rather than a second set
+of art: take whichever channel is brightest as the strength of the pixel and
+put it in red. Bone comes out red, the glowing eyes come out brighter red,
+the dark outline stays dark - the shape and shading survive, only the hue
+changes, for the cost of two comparators.
 
 **How it aims.** The heading is picked at random from eight compass points,
 and then the muzzle is *solved for*: given a soul centre and a heading, there
@@ -448,10 +463,14 @@ Before targeting hardware:
 - `sim/tb_battle_logic.v` drives the game logic with synthetic frame pulses
   (20 clocks apart instead of a real 420,000-clock frame), which makes it
   practical to play the battle out twice through the real button interface:
-  once winning with bullseye strikes while a small avoidance policy dodges
-  the bullets for the seven enemy turns that takes, once losing with weak
-  strikes and no dodging at all. The winning run is also the check that a
-  120 HP enemy is still beatable. It checks
+  once winning with bullseye strikes while a small avoidance policy plays
+  the seven enemy turns that takes, once losing with weak strikes and no
+  dodging at all. That policy steps out of the way of beams as well as
+  bullets - the distance across a beam is the same expression the hardware
+  draws it with, so the bench can move to make it bigger - and keeps walking
+  when the box is empty, because a blaster locks on to whatever is standing
+  still. The winning run is what shows the battle is still finishable now
+  that one of the waves kills outright: it comes through with 33 HP of 40. It checks
   the win and loss paths, restart-from-title, that a bullseye scores 16 and
   an edge press scores 3, that all four wall clamps and diagonal movement
   work, that a hit costs exactly 2 HP and cannot repeat inside the 60-frame
@@ -483,7 +502,9 @@ Before targeting hardware:
   after the lock is not; and all eight headings really do come up. In ring
   mode it also checks that the heading walks one compass point at a time,
   always the same way round, all the way through the circle, and that
-  blasters come far closer together than in the ordinary wave.
+  blasters come far closer together than in the ordinary wave. In crimson
+  mode it checks that only one is ever on screen, that the warning runs over
+  a second, and that hits are reported as fatal rather than as damage.
 - `sim/tb_soulbattle.v` runs the whole core at real 640x480@60 timing,
   checks the video timing the HDMI encoder depends on (exactly 640x480
   active pixels and 525 lines per frame), and dumps one frame of each screen
