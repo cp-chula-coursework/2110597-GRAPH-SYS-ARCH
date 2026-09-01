@@ -36,10 +36,13 @@
 module battle_core (
     input  wire       clk,          // 25.175 MHz pixel clock
     input  wire [3:0] key,          // active-low push buttons
+    input  wire [4:0] ext_key,      // buttons on the expansion header, to GND
+    input  wire       uart_rx_pin,   // PS2-to-serial adapter, its TXD to here
     input  wire       ps2_dat,      // PlayStation controller (optional)
     output wire       ps2_att,
     output wire       ps2_clk,
     output wire       ps2_cmd,
+    output wire [3:0] led,        // active-low controller diagnostics
     output wire [7:0] vid_r,
     output wire [7:0] vid_g,
     output wire [7:0] vid_b,
@@ -62,7 +65,8 @@ module battle_core (
     localparam [9:0]   DODGE_FRAMES = 10'd330;
     localparam [1:0]   WAVE_BLAST   = 2'd3;
 
-    localparam [2:0] S_DODGE = 3'd3,
+    localparam [2:0] S_TITLE = 3'd0,
+                     S_DODGE = 3'd3,
                      S_WIN   = 3'd4,
                      S_LOSE  = 3'd5;
 
@@ -89,19 +93,37 @@ module battle_core (
     // ---- input -------------------------------------------------------------
     wire [3:0] pad;
 
-    pad_input u_pad (
+    pad_input #(.N(4)) u_pad (
         .clk     (clk),
         .key     (key),
         .pressed (pad)
+    );
+
+    // Plain push buttons wired to the expansion header, each one shorting its
+    // pin to ground. Nothing else is needed: the pins hold themselves high, so
+    // there is no supply to get wrong and nothing that can be driven into an
+    // input that would not survive it.
+    //   ext[0] up   ext[1] down   ext[2] left   ext[3] right   ext[4] confirm
+    wire [4:0] ext;
+
+    pad_input #(.N(5)) u_ext (
+        .clk     (clk),
+        .key     (ext_key),
+        .pressed (ext)
     );
 
     // one transaction per frame, in the same vertical blanking the game
     // logic runs in - the result is ready long before the next frame needs it
     wire ps2_up, ps2_dn, ps2_lf, ps2_rt, ps2_ok;
 
+    // Up and down together is not a move the game can use, so the chord is
+    // free to toggle the wiring check in ps2_pad.v. It latches rather than
+    // being held, so a multimeter can be used with both hands free; led[2]
+    // stays lit while it is on.
     ps2_pad u_ps2 (
         .clk       (clk),
         .poll      (frame_start),
+        .find      (1'b0),   // bring-up mode, unused in the finished game
         .ps2_att   (ps2_att),
         .ps2_clk   (ps2_clk),
         .ps2_cmd   (ps2_cmd),
@@ -111,16 +133,146 @@ module battle_core (
         .pad_left  (ps2_lf),
         .pad_right (ps2_rt),
         .pad_ok    (ps2_ok),
-        .present   ()          // nothing on screen depends on it
+        .present   (),      // the game plays the same either way
+        .alive     (),
+        .dat_hi    ()
     );
+
+    // Controller diagnostics on the four board LEDs, which the game does not
+    // otherwise use. Read them bottom-up as a ladder while bringing the
+    // wiring up - each one only makes sense once the one before it is lit:
+    //
+    //   led[3]  heartbeat, ~1 Hz   this bitstream is the one running
+    //   led[2]  the pad answered   ID and the 5a came back: the bus works
+    //   led[1]  DATA has gone low  the controller is talking to us
+    //   led[0]  DATA is high now   the wire, its pull-up and 3.3V are all fine
+    //
+    // So: no heartbeat means the board is running an older bitstream. A dark
+    // led[0] is a wiring, power or pull-up fault and nothing else. led[0] lit
+    // but led[1] dark means the controller has power but never replies. led[1]
+    // lit but led[2] dark means the bus runs but the bytes are wrong, which is
+    // usually COMMAND and DATA swapped.
+    //
+    // The LEDs are active low: VCCIO_35 -> 330R -> LED -> FPGA pin.
+    // The four board LEDs mirror the player's HP a quarter at a time during a
+    // battle, so the board shows how it is going without looking at the
+    // screen. On the attract screen, where HP is always full and the number
+    // would say nothing, they echo the four external direction buttons
+    // instead - which is all the bring-up an external pad needs: press one,
+    // watch its lamp.
+    assign led = (state == S_TITLE) ? ~ext[3:0]
+                                    : ~{player_hp > 6'd30,
+                                        player_hp > 6'd20,
+                                        player_hp > 6'd10,
+                                        player_hp > 6'd0};
 
     // either input device drives the game; the d-pad and the buttons are the
     // same four signals as far as everything downstream is concerned
-    wire in_up = pad[0] | ps2_up;
-    wire in_dn = pad[1] | ps2_dn;
-    wire in_lf = pad[2] | ps2_lf;
-    wire in_rt = pad[3] | ps2_rt;
-    wire in_ok = ps2_ok;
+    wire in_up = pad[0] | ps2_up | ext[0] | ser_up;
+    wire in_dn = pad[1] | ps2_dn | ext[1] | ser_dn;
+    wire in_lf = pad[2] | ps2_lf | ext[2] | ser_lf;
+    wire in_rt = pad[3] | ps2_rt | ext[3] | ser_rt;
+    wire in_ok = ps2_ok | ext[4] | ser_ok;
+
+    // ---- the PS2-to-serial adapter -----------------------------------------
+    // The adapter has its own microcontroller: it talks the PlayStation
+    // protocol to the pad and sends the result here as an 8-byte packet,
+    // 0x73 .. 0x5A. What is not known from the outside is the rate it was
+    // left set to, or exactly how it packs the buttons - so nothing is
+    // decoded yet. The last eight bytes and the count of frames that arrived
+    // without a stop bit are simply put on screen, and the rate can be
+    // stepped through on the board until they make sense.
+    function [12:0] baud_div(input [2:0] sel);
+        case (sel)
+        3'd0: baud_div = 13'd2622;    //   9600
+        3'd1: baud_div = 13'd1311;    //  19200
+        3'd2: baud_div = 13'd656;     //  38400
+        3'd3: baud_div = 13'd437;     //  57600
+        default: baud_div = 13'd219;  // 115200
+        endcase
+    endfunction
+
+    // left and right together, held, steps the rate - not a move the game can
+    // use, and it has to be held so a scramble mid-dodge cannot trip it
+    localparam [5:0] CHORD_HOLD = 6'd45;      // 0.75 s
+    reg [2:0] baud_sel  = 3'd4;               // 115200 to start with
+    reg [5:0] baud_hold = 6'd0;
+    wire chord_baud = pad[2] & pad[3];
+
+    always @(posedge clk) if (frame_start) begin
+        if (!chord_baud)              baud_hold <= 6'd0;
+        else if (baud_hold != 6'd63)  baud_hold <= baud_hold + 6'd1;
+        if (chord_baud && baud_hold == CHORD_HOLD)
+            baud_sel <= (baud_sel == 3'd4) ? 3'd0 : baud_sel + 3'd1;
+    end
+
+    // stepping the rate restarts the error count, so what is on screen is
+    // always about the rate being tried now and not a previous guess
+    reg [2:0] baud_sel_d = 3'd4;
+    reg       baud_changed = 1'b0;
+    always @(posedge clk) begin
+        baud_sel_d   <= baud_sel;
+        baud_changed <= (baud_sel != baud_sel_d);
+    end
+
+    wire [7:0] uart_byte;
+    wire       uart_valid;
+    wire [7:0] uart_errors;
+
+    uart_rx u_uart (
+        .clk          (clk),
+        .rx           (uart_rx_pin),
+        .clks_per_bit (baud_div(baud_sel)),
+        .err_clear    (baud_changed),
+        .data         (uart_byte),
+        .valid        (uart_valid),
+        .errors       (uart_errors)
+    );
+
+    // The last eight bytes, oldest in the top byte. When those eight happen to
+    // start with 0x73 and end with 0x5A the window is sitting exactly on one
+    // of the adapter's packets, so it gets latched and shown instead - which
+    // means the read-out stops sliding and starts showing the packet lined up,
+    // and the marker on screen says the rate is right. If packets stop
+    // arriving for half a second the marker goes out again.
+    reg [63:0] uart_log = 64'd0;
+    reg [63:0] uart_pkt = 64'd0;
+    reg        pkt_ok   = 1'b0;
+    reg [5:0]  pkt_age  = 6'd63;
+    reg [63:0] uart_nxt;
+
+    always @(posedge clk) begin
+        if (uart_valid) begin
+            uart_nxt = {uart_log[55:0], uart_byte};
+            uart_log <= uart_nxt;
+            if (uart_nxt[63:56] == 8'h73 && uart_nxt[7:0] == 8'h5A) begin
+                uart_pkt <= uart_nxt;
+                pkt_ok   <= 1'b1;
+                pkt_age  <= 6'd0;
+            end
+        end
+        if (frame_start) begin
+            if (pkt_age == 6'd30) pkt_ok <= 1'b0;      // half a second
+            if (pkt_age != 6'd63) pkt_age <= pkt_age + 6'd1;
+        end
+    end
+
+    // ---- bytes to buttons ---------------------------------------------------
+    wire ser_up, ser_dn, ser_lf, ser_rt, ser_ok;
+    wire [7:0] ser_last;
+
+    serial_pad u_serpad (
+        .clk         (clk),
+        .frame_start (frame_start),
+        .data        (uart_byte),
+        .valid       (uart_valid),
+        .up          (ser_up),
+        .down        (ser_dn),
+        .left        (ser_lf),
+        .right       (ser_rt),
+        .ok          (ser_ok),
+        .last        (ser_last)
+    );
 
     // ---- game state (updated during vblank only) ---------------------------
     wire [2:0] state;
@@ -291,6 +443,11 @@ module battle_core (
         .enemy_hp    (enemy_hp),
         .cursor_x    (cursor_x),
         .last_damage (last_damage),
+        .dbg_bytes   (uart_log),
+        .dbg_baud    (baud_sel),
+        .dbg_last    (ser_last),
+        .dbg_btn     ({ser_up, ser_dn, ser_lf, ser_rt, ser_ok}),
+        .dbg_err     (uart_errors),
         .color       (hud_color),
         .visible     (hud_vis)
     );

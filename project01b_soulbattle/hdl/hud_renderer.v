@@ -5,6 +5,8 @@
 // both HP bars, the attack cursor with its target guides, and four lines of
 // text.
 //
+//   y=176  serial adapter read-out: baud, framing errors, last byte in,
+//          the decoded directions, and the last four bytes raw
 //   y=192  enemy name / damage read-out       (14 chars)
 //   y=216  enemy HP bar (240 px = 120 HP)
 //   y=250  battle box frame, 260x160, 4 px white border
@@ -38,6 +40,11 @@ module hud_renderer #(
     input  wire [6:0]  enemy_hp,    // 0..120
     input  wire [9:0]  cursor_x,
     input  wire [4:0]  last_damage,
+    input  wire [63:0] dbg_bytes,   // last 8 bytes off the serial adapter
+    input  wire [2:0]  dbg_baud,    // which rate is selected
+    input  wire [7:0]  dbg_last,    // last byte the adapter sent
+    input  wire [4:0]  dbg_btn,     // decoded: up down left right confirm
+    input  wire [7:0]  dbg_err,     // frames that arrived without a stop bit
     output reg  [11:0] color,       // valid 2 clocks after x/y
     output reg         visible
 );
@@ -56,6 +63,7 @@ module hud_renderer #(
     localparam integer INNER_B  = BOX_T + BOX_H - BORDER - 1;
     localparam integer CENTER_X = BOX_L + BOX_W / 2;
 
+    localparam integer DBG_X = 232, DBG_Y = 176, DBG_N = 23;
     localparam integer NAME_X = 264, NAME_Y = 192, NAME_N = 14;
     localparam integer EBAR_X = 200, EBAR_Y = 216, EBAR_W = 240, EBAR_H = 12;
     localparam integer MSG_X  = 256, MSG_Y  = 288;
@@ -85,6 +93,8 @@ module hud_renderer #(
     wire [3:0] dm_ones = last_damage - {dm_tens, 3'd0} - {1'b0, dm_tens, 1'b0};
 
     // ---- text bands --------------------------------------------------------
+    wire in_dbg  = (y >= DBG_Y)  && (y < DBG_Y + 16) &&
+                   (x >= DBG_X)  && (x < DBG_X + DBG_N * 8);
     wire in_name = (y >= NAME_Y) && (y < NAME_Y + 16) &&
                    (x >= NAME_X) && (x < NAME_X + NAME_N * 8);
     wire in_msg  = (y >= MSG_Y)  && (y < MSG_Y + 16) &&
@@ -96,11 +106,50 @@ module hud_renderer #(
     wire in_num  = (y >= HUD_Y)  && (y < HUD_Y + 16) &&
                    (x >= HPNUM_X) && (x < HPNUM_X + 7 * 8);
 
+    wire [4:0] idx_dbg  = (x - DBG_X)  >> 3;
     wire [3:0] idx_name = (x - NAME_X) >> 3;
     wire [3:0] idx_msg  = (x - MSG_X)  >> 3;
     wire [3:0] idx_hint = (x - HINT_X) >> 3;
     wire [3:0] idx_lbl  = (x - HPLBL_X) >> 3;
     wire [3:0] idx_num  = (x - HPNUM_X) >> 3;
+
+    // Serial read-out: "Bn Exx " then the last eight bytes as hex, oldest
+    // first. Two characters per byte and none in between, so the character
+    // index picks the byte with a shift instead of a divide.
+    function [6:0] hex_char(input [3:0] v);
+        hex_char = (v < 4'd10) ? ("0" + {3'd0, v}) : ("A" + {3'd0, v} - 7'd10);
+    endfunction
+
+    function [6:0] dbg_char(input [4:0] i, input [63:0] b, input [2:0] sel,
+                            input [7:0] last, input [4:0] btn,
+                            input [7:0] err);
+        reg [7:0] byt;
+        begin
+            byt = 8'h00;
+            case (i)
+            5'd0:  dbg_char = "B";
+            5'd1:  dbg_char = "0" + {4'd0, sel};
+            5'd2:  dbg_char = " ";
+            5'd3:  dbg_char = hex_char(err[7:4]);      // framing errors
+            5'd4:  dbg_char = hex_char(err[3:0]);
+            5'd5:  dbg_char = " ";
+            5'd6:  dbg_char = hex_char(last[7:4]);     // last byte in
+            5'd7:  dbg_char = hex_char(last[3:0]);
+            5'd8:  dbg_char = " ";
+            // what the game is actually being told, letter per direction
+            5'd9:  dbg_char = btn[4] ? "U" : "-";
+            5'd10: dbg_char = btn[3] ? "D" : "-";
+            5'd11: dbg_char = btn[2] ? "L" : "-";
+            5'd12: dbg_char = btn[1] ? "R" : "-";
+            5'd13: dbg_char = btn[0] ? "K" : "-";
+            5'd14: dbg_char = " ";
+            default: begin                              // last 4 bytes, raw
+                byt = b >> (8 * (3 - ((i - 5'd15) >> 1)));
+                dbg_char = i[0] ? hex_char(byt[7:4]) : hex_char(byt[3:0]);
+            end
+            endcase
+        end
+    endfunction
 
     // " ROOT SENTINEL"
     function [6:0] name_char(input [3:0] i);
@@ -199,7 +248,13 @@ module hud_renderer #(
     always @(*) begin
         ch        = " ";
         text_band = 1'b0;
-        if (in_name) begin
+        if (in_dbg) begin
+            // shown in every state during bring-up: the band sits between the
+            // enemy sprite and its name and is empty in all of them
+            text_band = 1'b1;
+            ch = dbg_char(idx_dbg, dbg_bytes, dbg_baud, dbg_last, dbg_btn,
+                          dbg_err);
+        end else if (in_name) begin
             text_band = (state != S_WIN);
             ch = (state == S_HIT) ? dmg_char(idx_name, dm_tens, dm_ones)
                                   : name_char(idx_name);

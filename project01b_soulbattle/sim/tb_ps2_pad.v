@@ -17,6 +17,8 @@
 //   - with nothing plugged in (DAT held high by its pull-up) `present` stays
 //     low and every button output stays at 0, which is what leaves the
 //     board's own push buttons in charge
+//   - `alive` separates "nothing is wired up" from "the wiring is fine but
+//     the bytes are wrong", which is what the board LEDs show during bring-up
 //
 //   iverilog -o /tmp/tb_ps2.vvp hdl/ps2_pad.v sim/tb_ps2_pad.v
 //   vvp /tmp/tb_ps2.vvp
@@ -29,14 +31,15 @@ module tb_ps2_pad;
     always #19.861 clk = ~clk;      // ~25.175 MHz
 
     reg  poll = 1'b0;
+    reg  find = 1'b0;
     wire att, sck, cmd, dat;
-    wire up, down, left, right, ok, present;
+    wire up, down, left, right, ok, present, alive, dat_hi;
 
     ps2_pad dut (
-        .clk (clk), .poll (poll),
+        .clk (clk), .poll (poll), .find (find),
         .ps2_att (att), .ps2_clk (sck), .ps2_cmd (cmd), .ps2_dat (dat),
         .pad_up (up), .pad_down (down), .pad_left (left), .pad_right (right),
-        .pad_ok (ok), .present (present)
+        .pad_ok (ok), .present (present), .alive (alive), .dat_hi (dat_hi)
     );
 
     // ---- the controller on the other end -----------------------------------
@@ -136,6 +139,7 @@ module tb_ps2_pad;
         no_buttons;
         run_poll;
         check(present, "a digital controller was not detected");
+        check(alive, "DATA never went low with a controller answering");
         check(byten == 5, "a digital controller should be a 5-byte transaction");
         check(cmd_log[0] == 8'h01, "first command byte was not 01");
         check(cmd_log[1] == 8'h42, "second command byte was not 42");
@@ -207,6 +211,8 @@ module tb_ps2_pad;
         plugged = 1'b0;
         run_poll;
         check(!present, "an empty socket was reported as a controller");
+        check(!alive, "an empty socket looked electrically alive");
+        check(dat_hi, "DATA did not idle high with its pull-up");
         check(!up && !down && !left && !right && !ok,
               "an empty socket reported buttons");
 
@@ -214,6 +220,16 @@ module tb_ps2_pad;
         plugged = 1'b1;
         run_poll;
         check(present, "the controller was not picked up again after unplugging");
+
+        // ---- the wiring-check mode parks the pins ---------------------------
+        find = 1'b1;
+        repeat (400) @(posedge clk);
+        check(att === 1'b0, "wiring check did not hold ATTENTION low");
+        check(sck === 1'b1, "wiring check did not hold CLOCK high");
+        check(!present, "wiring check left a stale controller detection");
+        find = 1'b0;
+        run_poll;
+        check(present, "the controller was not picked up again after a wiring check");
 
         if (errors == 0)
             $display("ALL TESTS PASSED");

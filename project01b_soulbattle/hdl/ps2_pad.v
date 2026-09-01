@@ -39,11 +39,12 @@
 //------------------------------------------------------------------------------
 module ps2_pad #(
     parameter integer CLK_HZ = 25_175_000,   // pixel clock
-    parameter integer SCK_HZ = 200_000,      // PSX bus clock (spec: 100k..500k)
-    parameter integer GAP_NS = 16_000        // quiet time between bytes
+    parameter integer SCK_HZ = 125_000,      // PSX bus clock (spec: 100k..500k)
+    parameter integer GAP_NS = 40_000        // quiet time between bytes
 )(
     input  wire clk,
     input  wire poll,            // 1-clk pulse: run one transaction
+    input  wire find,            // wiring check: park the pins at known levels
 
     output reg  ps2_att = 1'b1,  // to the pad (active low)
     output reg  ps2_clk = 1'b1,
@@ -55,8 +56,11 @@ module ps2_pad #(
     output reg  pad_left  = 1'b0,
     output reg  pad_right = 1'b0,
     output reg  pad_ok    = 1'b0,   // any face button or START
-    output reg  present   = 1'b0    // a controller answered this poll
-);
+    output reg  present   = 1'b0,   // a controller answered this poll
+    output reg  alive     = 1'b0,   // DATA was pulled low at least once - i.e.
+                                    // something is wired up and powered
+    output wire dat_hi              // DATA as it sits right now: high means the
+);                                  // wire and its pull-up are doing their job
 
     localparam integer HALF = CLK_HZ / (2 * SCK_HZ);          // half a bit
     localparam integer GAP  = (CLK_HZ / 1000) * GAP_NS / 1000_000 + 1;
@@ -82,6 +86,7 @@ module ps2_pad #(
     reg [7:0] lx    = 8'h80;
     reg [7:0] ly    = 8'h80;
     reg [3:0] ndata = 4'd2;     // data bytes this controller sends
+    reg       dat_any = 1'b0;   // saw DATA low at any point this transaction
 
     // 01 opens the transaction, 42 asks for the buttons, the rest are filler
     function [7:0] tx_of(input [3:0] n);
@@ -103,7 +108,29 @@ module ps2_pad #(
     reg [1:0] dat_sync = 2'b11;
     always @(posedge clk) dat_sync <= {dat_sync[0], ps2_dat};
 
+    assign dat_hi = dat_sync[1];
+
+    // ---- wiring check ------------------------------------------------------
+    // Holding it puts each output at a level a cheap multimeter can tell
+    // apart, so the three FPGA outputs can be found on the header without a
+    // scope and without having to trust the schematic:
+    //
+    //   ATTENTION  steady 0 V        CLOCK  steady 3.3 V
+    //   COMMAND    swinging 0 <-> 3.3 V about once a second
+    //
+    // Whatever is measured on DATA is the controller's business, not ours.
+    reg [23:0] beacon = 24'd0;
+    always @(posedge clk) beacon <= beacon + 24'd1;
+
     always @(posedge clk) begin
+        if (find) begin
+            st      <= S_IDLE;
+            ps2_att <= 1'b0;
+            ps2_clk <= 1'b1;
+            ps2_cmd <= beacon[23];
+            present <= 1'b0;
+            alive   <= 1'b0;
+        end else
         case (st)
 
         // ---- waiting for the frame tick ------------------------------------
@@ -118,6 +145,7 @@ module ps2_pad #(
                 rxb     <= 8'h00;
                 lx      <= 8'h80;      // so a digital pad reads as centred
                 ly      <= 8'h80;
+                dat_any <= 1'b0;
                 cnt     <= 12'd0;
                 st      <= S_LEAD;
             end
@@ -146,6 +174,7 @@ module ps2_pad #(
             cnt     <= 12'd0;
             ps2_clk <= 1'b1;
             rxb     <= {dat_sync[1], rxb[7:1]};  // LSB first
+            if (!dat_sync[1]) dat_any <= 1'b1;
             if (bit_i == 3'd7)
                 st <= S_GAP;
             else begin
@@ -193,6 +222,7 @@ module ps2_pad #(
             ps2_att <= 1'b1;
             ps2_cmd <= 1'b1;
             present <= present_now;
+            alive   <= dat_any;
             st      <= S_IDLE;
         end
 

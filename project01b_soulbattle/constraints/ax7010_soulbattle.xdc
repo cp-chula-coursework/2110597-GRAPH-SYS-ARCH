@@ -57,6 +57,8 @@ set_property IOSTANDARD TMDS_33 [get_ports {TMDS_data_n[2]}]
 ##   COMMAND              orange   FPGA -> pad  IO2_1N    F17
 ##   ATTENTION            yellow   FPGA -> pad  IO2_2P    F19
 ##   DATA                 brown    pad -> FPGA  IO2_2N    F20   (open drain)
+##   5V                   red      -            header pin 2 (the adapter has
+##                                              its own 3.3V regulator)
 ##   3.3V                 red      -            3V3 pin on the same header
 ##   GND                  black    -            GND pin on the same header
 ##
@@ -69,15 +71,99 @@ set_property IOSTANDARD TMDS_33 [get_ports {TMDS_data_n[2]}]
 set_property PACKAGE_PIN F16 [get_ports {ps2_clk}]
 set_property IOSTANDARD LVCMOS33 [get_ports {ps2_clk}]
 set_property SLEW SLOW [get_ports {ps2_clk}]
+set_property PULLUP true [get_ports {ps2_clk}]   ## holds it high while the port test lets go
 
 set_property PACKAGE_PIN F17 [get_ports {ps2_cmd}]
 set_property IOSTANDARD LVCMOS33 [get_ports {ps2_cmd}]
 set_property SLEW SLOW [get_ports {ps2_cmd}]
+set_property PULLUP true [get_ports {ps2_cmd}]   ## holds it high while the port test lets go
 
 set_property PACKAGE_PIN F19 [get_ports {ps2_att}]
 set_property IOSTANDARD LVCMOS33 [get_ports {ps2_att}]
 set_property SLEW SLOW [get_ports {ps2_att}]
+set_property PULLUP true [get_ports {ps2_att}]   ## holds it high while the port test lets go
 
+## Bring-up note: whichever pin was given to ps2_dat did not register being
+## earthed, on three different pins (F20, G20, F19), while that same F19 did
+## register while it carried ps2_att. The one difference was the port
+## direction, so ps2_dat is now declared inout and let go rather than being a
+## plain input - see battle_core.v. The pin map below is the tidy one, with all
+## four signals in the top three rows of the header.
+##
+## Keep a series resistor of about 1k on DATA. The adapter pulls the line to
+## 5V through its own pull-up and this input is not 5V tolerant; without the
+## resistor the pin's clamp diode carries the whole current.
 set_property PACKAGE_PIN F20 [get_ports {ps2_dat}]
 set_property IOSTANDARD LVCMOS33 [get_ports {ps2_dat}]
 set_property PULLUP true [get_ports {ps2_dat}]
+
+## Board LEDs, used as PlayStation-controller diagnostics (see battle_core.v).
+## Active low: VCCIO_35 -> 330R -> LED -> FPGA pin, so a 0 lights the LED.
+set_property PACKAGE_PIN M14 [get_ports {led[0]}]
+set_property IOSTANDARD LVCMOS33 [get_ports {led[0]}]
+
+set_property PACKAGE_PIN M15 [get_ports {led[1]}]
+set_property IOSTANDARD LVCMOS33 [get_ports {led[1]}]
+
+set_property PACKAGE_PIN K16 [get_ports {led[2]}]
+set_property IOSTANDARD LVCMOS33 [get_ports {led[2]}]
+
+set_property PACKAGE_PIN J16 [get_ports {led[3]}]
+set_property IOSTANDARD LVCMOS33 [get_ports {led[3]}]
+
+## External push buttons on expansion connector J10 (the IO1 header, on the
+## opposite edge of the board from J11). Each button just shorts its pin to
+## ground; the pins hold themselves high, so there is no supply involved and
+## nothing that can be driven into them that they would not survive.
+##
+##   button    J10 pin   net       package pin
+##   --------  --------  --------  -----------
+##   up            3     IO1_1N    W19
+##   down          4     IO1_1P    W18
+##   left          5     IO1_2N    R14
+##   right         6     IO1_2P    P14
+##   confirm       7     IO1_3N    Y17
+##   common GND    1     -         -
+##
+## Careful: J10 numbers the opposite way round from J11 - its pin 1 is at the
+## BOTTOM of the header, marked by the square pad. Pin 2 is 5V; leave it alone.
+##
+## Leaving these pins unwired is fine: they read as "not pressed" and the
+## board's own four buttons carry on as before.
+set_property PACKAGE_PIN W19 [get_ports {ext_key[0]}]
+set_property IOSTANDARD LVCMOS33 [get_ports {ext_key[0]}]
+set_property PULLUP true [get_ports {ext_key[0]}]
+
+set_property PACKAGE_PIN W18 [get_ports {ext_key[1]}]
+set_property IOSTANDARD LVCMOS33 [get_ports {ext_key[1]}]
+set_property PULLUP true [get_ports {ext_key[1]}]
+
+set_property PACKAGE_PIN R14 [get_ports {ext_key[2]}]
+set_property IOSTANDARD LVCMOS33 [get_ports {ext_key[2]}]
+set_property PULLUP true [get_ports {ext_key[2]}]
+
+set_property PACKAGE_PIN P14 [get_ports {ext_key[3]}]
+set_property IOSTANDARD LVCMOS33 [get_ports {ext_key[3]}]
+set_property PULLUP true [get_ports {ext_key[3]}]
+
+set_property PACKAGE_PIN Y17 [get_ports {ext_key[4]}]
+set_property IOSTANDARD LVCMOS33 [get_ports {ext_key[4]}]
+set_property PULLUP true [get_ports {ext_key[4]}]
+
+## PS2-to-serial adapter (the board with its own microcontroller on it, which
+## talks the PlayStation protocol to the pad and sends the result on as an
+## 8-byte packet). Only its TXD is needed - nothing is ever sent back to it.
+##
+##   adapter pin   goes to             J10 pin   package pin
+##   -----------   -----------------   -------   -----------
+##   TXD           uart_rx_pin         8         Y16
+##   GND           header GND          1         -
+##   VCC           header 3V3          39 or 40  -
+##   RXD           leave unconnected   -         -
+##
+## Power it from 3.3V, not the 5V on pin 2: at 3.3V its TXD swings 3.3V and
+## can be wired straight in. A 1k resistor in series with TXD costs nothing
+## and means a module that turns out to drive 5V cannot hurt the input.
+set_property PACKAGE_PIN Y16 [get_ports {uart_rx_pin}]
+set_property IOSTANDARD LVCMOS33 [get_ports {uart_rx_pin}]
+set_property PULLUP true [get_ports {uart_rx_pin}]

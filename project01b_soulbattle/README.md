@@ -76,12 +76,87 @@ screen instead.
 | key[2] | T17 | Move left  / confirm                              |
 | key[3] | R17 | Move right / confirm                              |
 
+The four board LEDs (M14, M15, K16, J16) show the player's HP a quarter at a
+time, so the board itself shows how the battle is going. On the attract
+screen, where HP is always full, they echo the four external buttons instead.
+
+### External buttons (optional)
+
+Five plain push buttons on expansion connector J10, each shorting its pin to
+ground - no supply, no resistors, nothing that can be driven into a pin that
+would not survive it.
+
+| Button | J10 pin | Package pin |
+|--------|---------|-------------|
+| up | 3 | W19 |
+| down | 4 | W18 |
+| left | 5 | R14 |
+| right | 6 | P14 |
+| confirm | 7 | Y17 |
+| common ground | 1 | - |
+
+J10 numbers the opposite way round from J11: its pin 1 is at the **bottom**,
+marked by the square pad, and pin 2 is 5V - leave that one alone.
+
+### PlayStation controller through a serial adapter (optional)
+
+The way a controller actually reached this design in the end. The adapter is
+a board with its own microcontroller: it talks the PlayStation protocol to
+the pad and sends the result on as plain serial, so the FPGA needs one input
+pin and a UART receiver rather than four pins and bit-level timing.
+
+| Adapter pin | Goes to | J10 pin | Package pin |
+|-------------|---------|---------|-------------|
+| TXD | `uart_rx_pin`, through ~1k | 8 | Y16 |
+| GND | header GND | 1 | - |
+| VCC | header **3.3V** | 39 or 40 | - |
+| RXD | leave unconnected | - | - |
+
+Power it from 3.3V rather than the 5V on pin 2: at 3.3V its TXD swings 3.3V
+and can be wired straight in.
+
+This particular adapter turned out to send one byte per button rather than
+the 8-byte packet its documentation describes - `41` up, `42` down, `43`
+left, `44` right - at 9600 baud. Nothing says when a button is released, so
+`serial_pad.v` gives each button a timer that an arriving byte reloads and
+the frame tick counts down; a button reads as held while its timer runs.
+
+Because none of that could be known in advance, a read-out sits on screen
+above the enemy's name in every state:
+
+```
+B0 00 43 --LR- 41414143
+│  │  │  │     └─ the last four bytes, raw
+│  │  │  └─────── what the game is being told: up down left right confirm
+│  │  └────────── the last byte that arrived
+│  └───────────── frames that arrived without a stop bit
+└──────────────── selected baud rate: B0 9600 ... B4 115200
+```
+
+Holding left and right together for three quarters of a second steps the baud
+rate, and doing so restarts the error count - a wrong rate shows as errors
+climbing, a dead wire as nothing happening at all, which is the difference
+that matters when nothing works yet.
+
 ### PlayStation controller (optional)
 
 A PSX/PS2 controller can be wired to the expansion header and used instead of
 - or alongside - the buttons. `ps2_pad.v` polls it once per frame and simply
 ORs the result in with the board buttons, so neither input has to be present
 and both work at the same time.
+
+> **Status: written and simulated, superseded on hardware by the serial
+> adapter below.** The module
+> passes its testbench against a model of a real controller, and the game runs
+> with or without a controller plugged in, but bring-up on this board did not
+> get as far as a controller answering. What was established: all three
+> outputs (COMMAND, CLOCK, ATTENTION) reach the header and are identifiable by
+> earthing them one at a time, the pin numbering below is correct, and the
+> adapter's own regulator needs 5V rather than 3.3V. What was never solved:
+> the DATA pin never registered being earthed, on any of three pins tried and
+> whether declared as an input or as a tri-stated inout, even though the same
+> pin drove out correctly. The four board buttons play the game in full, so
+> this is an extra rather than a dependency.
 
 | Controller            | Game                                             |
 |-----------------------|--------------------------------------------------|
@@ -271,7 +346,9 @@ available; it uses one), so the renderers never see state change mid-frame.
 | `soul_rom.v`, `monster_rom.v`, `blaster_rom.v` | generated art (`scripts/gen_assets.py`) |
 | `font_rom.v` | 8x16 ASCII font, reused verbatim from project02_textmode |
 | `pad_input.v` | 4-button synchronizer + debouncer, as in project03 |
-| `ps2_pad.v` | PlayStation controller host: SPI mode 3, LSB first, one poll per frame |
+| `ps2_pad.v` | PlayStation controller host: SPI mode 3, LSB first, one poll per frame (see the status note under Controls) |
+| `uart_rx.v` | 8N1 serial receiver, baud selectable on the board |
+| `serial_pad.v` | serial adapter bytes -> held button levels |
 | `vga_timing.v`, `hdmi_tx.v`, `tmds_encoder.v`, `oserdes_tmds.v` | unchanged from project01 |
 
 Notes on the design decisions a hardwired console forces:
@@ -354,6 +431,11 @@ Before targeting hardware:
   wave fires no bullets at all, that a soul standing still is hit by a beam
   for 3 HP, and that the turn is not handed back while a blaster is still on
   screen.
+- `sim/tb_uart_rx.v` shifts bytes in the way a transmitter does and checks
+  they come back out: single bytes, a whole 8-byte packet back to back, a
+  transmitter a few percent off the receiver's rate, a frame with no stop bit
+  being dropped and counted rather than passed on, and a glitch on an idle
+  line not being taken for a start bit.
 - `sim/tb_ps2_pad.v` puts a model of a real controller on the other end of
   the wire - it shifts its answer out on each falling clock edge and latches
   the host's command on each rising one, exactly as the hardware does. It

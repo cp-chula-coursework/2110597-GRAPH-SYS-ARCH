@@ -43,10 +43,13 @@ module tb_soulbattle;
     battle_core dut (
         .clk     (clk),
         .key     (key),
+        .ext_key (5'b11111),   // no external buttons: all released
+        .uart_rx_pin (1'b1),   // no adapter: the line idles high
         .ps2_dat (1'b1),        // no controller: DAT idles high on its pull-up
         .ps2_att (),
         .ps2_clk (),
         .ps2_cmd (),
+        .led     (),
         .vid_r  (vid_r),
         .vid_g  (vid_g),
         .vid_b  (vid_b),

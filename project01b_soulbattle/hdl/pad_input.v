@@ -1,8 +1,9 @@
 //------------------------------------------------------------------------------
 // pad_input.v
 //
-// Game-pad conditioning for the AX7010's 4 active-low push buttons (this
-// board's stand-in for a console controller): 2-FF synchronizer + counter
+// Game-pad conditioning for active-low push buttons - the board's own four,
+// and any wired to the expansion header - as this board's stand-in for a
+// console controller: 2-FF synchronizer + counter
 // debounce per button - the same debouncer project03_platformer uses. Unlike
 // project02's button_input.v there is no typematic repeat - the game logic
 // wants clean held *levels* (it samples them once per frame for four-way
@@ -11,16 +12,17 @@
 // pressed[i] - debounced level, active-high
 //------------------------------------------------------------------------------
 module pad_input #(
+    parameter integer N = 4,                    // buttons on this port
     parameter integer DEBOUNCE_CYCLES = 125000  // ~5 ms at 25.175 MHz
 )(
-    input  wire       clk,       // pixel clock
-    input  wire [3:0] key,       // raw async buttons, active-low
-    output wire [3:0] pressed
+    input  wire        clk,      // pixel clock
+    input  wire [N-1:0] key,     // raw async buttons, active-low
+    output wire [N-1:0] pressed
 );
 
     genvar i;
     generate
-        for (i = 0; i < 4; i = i + 1) begin : g_btn
+        for (i = 0; i < N; i = i + 1) begin : g_btn
             // synchronize + invert to active-high
             reg s0 = 1'b0, s1 = 1'b0;
             always @(posedge clk) begin

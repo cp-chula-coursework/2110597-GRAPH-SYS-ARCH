@@ -22,10 +22,13 @@
 module top(
     input  wire sys_clk,           // 50 MHz onboard oscillator
     input  wire [3:0] key,         // key[0]=up key[1]=down key[2]=left key[3]=right, active-low
+    input  wire [4:0] ext_key,     // optional buttons on expansion header J10
+    input  wire uart_rx_pin,       // PS2-to-serial adapter TXD, on J10 too
     input  wire ps2_dat,           // PlayStation controller on the expansion header
     output wire ps2_att,
     output wire ps2_clk,
     output wire ps2_cmd,
+    output wire [3:0] led,         // active-low player HP meter, see battle_core
     output wire hdmi_oen,
     output wire TMDS_clk_p,
     output wire TMDS_clk_n,
@@ -51,10 +54,13 @@ clk_wiz_video u_clk_wiz (
 battle_core u_core (
     .clk     (pixel_clk),
     .key     (key),
+    .ext_key (ext_key),
+    .uart_rx_pin (uart_rx_pin),
     .ps2_dat (ps2_dat),
     .ps2_att (ps2_att),
     .ps2_clk (ps2_clk),
     .ps2_cmd (ps2_cmd),
+    .led     (led),
     .vid_r  (vid_r),
     .vid_g  (vid_g),
     .vid_b  (vid_b),
