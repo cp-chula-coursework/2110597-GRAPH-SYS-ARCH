@@ -15,10 +15,17 @@
 // It also checks the video timing the HDMI encoder depends on: exactly
 // 640x480 active pixels per frame, and 525 lines between vsyncs.
 //
+// The blaster wave is four enemy turns in, which at real frame timing is a
+// couple of thousand frames away - too far to be worth simulating here, so
+// sim/tb_blaster_draw.v dumps that layer's picture on its own instead. What
+// this bench does check is that the blasters stay completely out of the way
+// during the bullet waves.
+//
 //   iverilog -o /tmp/tb_sb.vvp hdl/vga_timing.v hdl/pad_input.v \
-//     hdl/soul_rom.v hdl/monster_rom.v hdl/font_rom.v hdl/soul_renderer.v \
-//     hdl/monster_renderer.v hdl/bullet_renderer.v hdl/hud_renderer.v \
-//     hdl/battle_logic.v hdl/battle_core.v sim/tb_soulbattle.v
+//     hdl/soul_rom.v hdl/monster_rom.v hdl/blaster_rom.v hdl/font_rom.v \
+//     hdl/soul_renderer.v hdl/monster_renderer.v hdl/bullet_renderer.v \
+//     hdl/blaster_renderer.v hdl/hud_renderer.v hdl/battle_logic.v \
+//     hdl/blaster_logic.v hdl/battle_core.v sim/tb_soulbattle.v
 //   vvp /tmp/tb_sb.vvp
 //------------------------------------------------------------------------------
 `timescale 1ns / 1ps
@@ -52,6 +59,8 @@ module tb_soulbattle;
     wire [5:0] player_hp   = dut.player_hp;
     wire [5:0] enemy_hp    = dut.enemy_hp;
     wire [4:0] last_damage = dut.last_damage;
+    wire [1:0] wave        = dut.wave;
+    wire       blast_busy  = dut.blast_busy;
 
     integer errors = 0;
     integer frame_no = 0;
@@ -165,6 +174,8 @@ module tb_soulbattle;
         check(state == S_DODGE, "never reached the enemy's turn");
         step_frames(70);
         check(dut.bullet_active != 8'd0, "the enemy turn spawned no bullets");
+        check(wave == 2'd0, "the first enemy turn is not the falling-pillar wave");
+        check(!blast_busy, "a blaster turned up during a bullet wave");
         dump_frame("soulbattle_dodge.ppm");
 
         if (errors == 0)

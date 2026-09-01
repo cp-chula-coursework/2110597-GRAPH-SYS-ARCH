@@ -6,22 +6,24 @@
 // compositor. Runs entirely at the 25.175 MHz pixel clock.
 //
 //                                x,y
-//   vga_timing ---> +-------------+-------------+--------------+
-//                   |             |             |              |
-//                   v             v             v              v
-//             soul_renderer  bullet_renderer  hud_renderer  monster_renderer
-//              (soul_rom)     (comparator      (font_rom,    (monster_rom,
-//               2 clks)         shapes,         2 clks)       2x scale,
-//                   |           2 clks)            |           2 clks)
-//                   +-------------+-------------+--+
+//   vga_timing --> +----------+----------+----------+----------+----------+
+//                  |          |          |          |          |          |
+//                  v          v          v          v          v          v
+//              soul_    blaster_    bullet_      hud_      monster_
+//            renderer   renderer   renderer   renderer   renderer
+//            (soul_rom) (blaster_  (comparator (font_rom) (monster_rom,
+//                        rom, 2x)   shapes)                2x scale)
+//                  |          |          |          |          |
+//                  +----------+----------+----------+----------+
 //                                 |                        hs/vs/blank
-//                    compositor (soul > bullets >           2-stage delay
-//                     HUD > enemy > black)                        |
+//              compositor (soul > blasters > bullets >     2-stage delay
+//               HUD > enemy > black)  - every layer 2 clks       |
 //                                 +--------> vid_r/g/b, syncs <---+
 //
 //   battle_logic runs its whole turn machine in the vertical blanking
 //   interval (frame_start), so nothing the renderers read ever changes
-//   mid-frame.
+//   mid-frame. blaster_logic runs on the same tick, one wave in four, and
+//   needs the soul's coordinates because its beams aim at them.
 //
 // Button map (all four are needed for four-way movement, so there is no
 // spare reset key - the battle restarts from the attract screen instead):
@@ -45,9 +47,16 @@ module battle_core (
     localparam integer BOX_H   = 160;
     localparam integer BORDER  = 4;
     localparam integer NBULLET = 8;
+    localparam integer NBLAST  = 2;    // blasters on screen at once
 
-    localparam [2:0] S_WIN  = 3'd4,
-                     S_LOSE = 3'd5;
+    // spawn window of an enemy turn, shared by the bullet waves and the
+    // blaster wave so both stop feeding the box at the same moment
+    localparam [9:0]   DODGE_FRAMES = 10'd330;
+    localparam [1:0]   WAVE_BLAST   = 2'd3;
+
+    localparam [2:0] S_DODGE = 3'd3,
+                     S_WIN   = 3'd4,
+                     S_LOSE  = 3'd5;
 
     // enemy sprite: 64x64 ROM drawn at 2x, centred on the screen
     localparam [9:0] MON_X = 10'd253;   // + a 0..6 px shake
@@ -89,13 +98,14 @@ module battle_core (
     wire [4:0] last_damage;
     wire [7:0] hit_flash;
     wire [2:0] round_cnt;
+    wire [1:0] wave;
     wire [NBULLET*10-1:0] bullet_x, bullet_y;
     wire [NBULLET*2-1:0]  bullet_type;
     wire [NBULLET-1:0]    bullet_active;
 
     battle_logic #(
         .BOX_L (BOX_L), .BOX_T (BOX_T), .BOX_W (BOX_W), .BOX_H (BOX_H),
-        .BORDER (BORDER), .NBULLET (NBULLET)
+        .BORDER (BORDER), .NBULLET (NBULLET), .DODGE_FRAMES (DODGE_FRAMES)
     ) u_logic (
         .clk           (clk),
         .frame_start   (frame_start),
@@ -103,6 +113,8 @@ module battle_core (
         .pad_dn        (pad[1]),
         .pad_lf        (pad[2]),
         .pad_rt        (pad[3]),
+        .blast_hit     (blast_hit),
+        .blast_busy    (blast_busy),
         .state         (state),
         .timer         (timer),
         .anim          (anim),
@@ -115,10 +127,49 @@ module battle_core (
         .last_damage   (last_damage),
         .hit_flash     (hit_flash),
         .round_cnt     (round_cnt),
+        .wave          (wave),
         .bullet_x      (bullet_x),
         .bullet_y      (bullet_y),
         .bullet_type   (bullet_type),
         .bullet_active (bullet_active)
+    );
+
+    // ---- the blaster wave --------------------------------------------------
+    // One wave in four is handed over to blaster_logic, which aims at the
+    // soul and reports back only "a beam is on you" and "still busy" - the
+    // turn itself still ends in battle_logic.
+    wire blast_hit, blast_busy;
+    wire [NBLAST*10-1:0] bl_mx, bl_my, bl_reach;
+    wire [NBLAST*3-1:0]  bl_dir, bl_kick;
+    wire [NBLAST*5-1:0]  bl_hw;
+    wire [NBLAST*2-1:0]  bl_dim;
+    wire [NBLAST-1:0]    bl_hot, bl_head;
+
+    wire blast_run   = (state == S_DODGE) && (wave == WAVE_BLAST);
+    wire blast_spawn = blast_run && (timer < DODGE_FRAMES);
+
+    blaster_logic #(
+        .BOX_L (BOX_L), .BOX_T (BOX_T), .BOX_W (BOX_W), .BOX_H (BOX_H),
+        .NBLAST (NBLAST)
+    ) u_blast (
+        .clk         (clk),
+        .frame_start (frame_start),
+        .run         (blast_run),
+        .spawn_en    (blast_spawn),
+        .soul_x      (soul_x),
+        .soul_y      (soul_y),
+        .round_cnt   (round_cnt),
+        .bl_mx       (bl_mx),
+        .bl_my       (bl_my),
+        .bl_dir      (bl_dir),
+        .bl_hw       (bl_hw),
+        .bl_reach    (bl_reach),
+        .bl_kick     (bl_kick),
+        .bl_dim      (bl_dim),
+        .bl_hot      (bl_hot),
+        .bl_head     (bl_head),
+        .blast_hit   (blast_hit),
+        .blast_busy  (blast_busy)
     );
 
     // ---- enemy presentation: idle bob, hit shake/flash, death fade ---------
@@ -161,6 +212,29 @@ module battle_core (
         .bullet_active (bullet_active),
         .color         (bullet_color),
         .visible       (bullet_vis)
+    );
+
+    wire [11:0] blast_color;
+    wire        blast_vis;
+
+    blaster_renderer #(
+        .BOX_L (BOX_L), .BOX_T (BOX_T), .BOX_W (BOX_W), .BOX_H (BOX_H),
+        .BORDER (BORDER), .NBLAST (NBLAST)
+    ) u_blast_draw (
+        .clk      (clk),
+        .x        (x),
+        .y        (y),
+        .bl_mx    (bl_mx),
+        .bl_my    (bl_my),
+        .bl_dir   (bl_dir),
+        .bl_hw    (bl_hw),
+        .bl_reach (bl_reach),
+        .bl_kick  (bl_kick),
+        .bl_dim   (bl_dim),
+        .bl_hot   (bl_hot),
+        .bl_head  (bl_head),
+        .color    (blast_color),
+        .visible  (blast_vis)
     );
 
     wire [11:0] hud_color;
@@ -208,8 +282,13 @@ module battle_core (
         blank_d <= {blank_d[0], blank};
     end
 
-    // ---- compositor: soul over bullets over HUD over enemy over black ------
+    // ---- compositor: soul over blasters over bullets over HUD over enemy ---
+    // The blasters sit above the HUD on purpose: a skull that comes in over
+    // the top edge of the box passes in front of the enemy's name and HP bar
+    // for the second or so it is on screen, which is what the attack is
+    // supposed to look like.
     wire [11:0] pix = soul_vis   ? soul_color   :
+                      blast_vis  ? blast_color  :
                       bullet_vis ? bullet_color :
                       hud_vis    ? hud_color    :
                       mon_vis    ? mon_color    : 12'h000;

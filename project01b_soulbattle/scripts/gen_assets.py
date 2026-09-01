@@ -12,6 +12,9 @@ Generates (into hdl/, next to this script's parent):
                    addr = {frame, y[3:0], x[3:0]}
   monster_rom.v  - the enemy, ROOT SENTINEL: 64x64 px, 12-bit RGB, drawn on
                    screen at 2x (128x128), addr = {y[5:0], x[5:0]}
+  blaster_rom.v  - the blaster skull: 2 frames of 32x32 px, 12-bit RGB
+                   (0 = facing down, 1 = facing down-right), drawn at 2x
+                   (64x64), addr = {frame, y[4:0], x[4:0]}
 
 12'hFFF (pure white) = transparent in both ROMs, the same convention the
 course slides use for sprites, so no pure white appears in the art itself
@@ -20,8 +23,8 @@ course slides use for sprites, so no pure white appears in the art itself
 Usage:
   python3 scripts/gen_assets.py [--preview DIR]
 
---preview DIR additionally writes soul.png / monster.png previews (8x
-nearest-neighbour blowups, requires Pillow) for eyeballing the art.
+--preview DIR additionally writes soul / monster / blaster PNG previews
+(nearest-neighbour blowups, requires Pillow) for eyeballing the art.
 """
 
 import argparse
@@ -262,6 +265,126 @@ def build_monster():
 
 
 # ---------------------------------------------------------------------------
+# The blaster: a floating beast skull that turns to face the soul and fires a
+# beam straight out of its muzzle.
+#
+# It is drawn in the beam's own frame of reference - u = how far behind the
+# muzzle a pixel sits, v = how far to the side - so the same shape function
+# serves both ROM frames: one rasterized facing straight down, one facing
+# down-right. The eight on-screen headings then come from those two frames
+# under the square's own symmetries (mirror in x, mirror in y, transpose),
+# which cost a hardware sprite engine nothing but address wiring.
+# ---------------------------------------------------------------------------
+BL = 32                     # blaster ROM cell; blaster_renderer draws it at 2x
+BL_DMUZ = 26                # muzzle of the diagonal frame, in cell pixels
+
+BONE_HI = 0xEED
+BONE = 0xCCB
+BONE_MID = 0xAA9
+BONE_LO = 0x887
+BONE_DEEP = 0x554
+HORN_HI = 0xDDC
+HORN_LO = 0x998
+SOCKET_B = 0x112
+EYE = 0x7DF
+EYE_HOT = 0xCEF
+BORE = 0x8CF
+BORE_HOT = 0xDEF
+TOOTH_B = 0xEEE
+OUTLINE_B = 0x221
+
+# Half-width of the skull silhouette, u pixels behind the muzzle: a wide
+# fanged jaw, a pinched snout, then the cranium, tapering off at the back.
+BL_PROFILE = ((0.0, 7.2), (2.5, 7.6), (5.0, 6.6), (9.0, 7.4), (13.0, 10.0),
+              (19.0, 10.4), (23.0, 9.0), (26.0, 5.0), (28.0, 1.2))
+
+
+def bl_halfwidth(u):
+    if u < 0.0 or u > BL_PROFILE[-1][0]:
+        return -1.0
+    for (u0, w0), (u1, w1) in zip(BL_PROFILE, BL_PROFILE[1:]):
+        if u0 <= u <= u1:
+            return w0 + (w1 - w0) * (u - u0) / (u1 - u0)
+    return -1.0
+
+
+def bl_horn(u, v):
+    """The pair of horns sweeping back and out from the temples."""
+    if u < 14.0 or u > 26.0:
+        return False
+    t = (u - 14.0) / 12.0
+    return abs(abs(v) - (8.4 + 2.8 * t)) <= 2.8 - 1.9 * t
+
+
+def bl_solid(u, v):
+    return (u >= 0.0 and abs(v) <= bl_halfwidth(u)) or bl_horn(u, v)
+
+
+def bl_color(u, v):
+    av = abs(v)
+    if u <= 3.6 and av <= 4.6:                          # the beam bore
+        return BORE_HOT if u <= 2.0 else BORE
+    if u <= 3.6:                                        # fangs ringing it
+        return TOOTH_B if int((av - 4.6) * 1.1) % 2 == 0 else BONE_DEEP
+    if u <= 4.6:                                        # dark gum line
+        return BONE_DEEP
+    du, dv = (u - 15.5) / 4.4, (av - 5.6) / 3.2         # eye socket
+    d2 = du * du + dv * dv
+    if d2 <= 1.0:
+        di, dj = (u - 14.7) / 2.0, (av - 5.4) / 1.6
+        e2 = di * di + dj * dj
+        return EYE_HOT if e2 <= 1.0 else (EYE if e2 <= 2.4 else SOCKET_B)
+    if 7.0 <= u <= 11.0 and av <= 0.8 + (u - 7.0) * 0.30:   # nasal slit
+        return SOCKET_B
+    if bl_horn(u, v):
+        return HORN_HI if v < 0 else HORN_LO
+    if 19.0 <= u <= 21.0 and av <= 9.4:                 # brow ridge
+        return BONE_LO
+    if v < -2.5:                                        # lit from one side
+        return BONE_HI
+    if v > 3.5:
+        return BONE_MID
+    return BONE
+
+
+def build_blaster(fx, fy, mx, my):
+    """Rasterize the skull into a BL x BL cell, facing (fx, fy), with its
+    muzzle - the point the beam leaves from - at cell coordinate (mx, my)."""
+    ln = (fx * fx + fy * fy) ** 0.5
+    fx, fy = fx / ln, fy / ln
+    nx, ny = fy, -fx                       # lateral axis
+
+    local = [[(0.0, 0.0)] * BL for _ in range(BL)]
+    solid = [[False] * BL for _ in range(BL)]
+    for py in range(BL):
+        for px in range(BL):
+            ox, oy = px + 0.5 - mx, py + 0.5 - my
+            u = -(ox * fx + oy * fy)       # distance behind the muzzle
+            v = ox * nx + oy * ny          # distance to the side
+            local[py][px] = (u, v)
+            solid[py][px] = bl_solid(u, v)
+
+    img = [[TRANSPARENT] * BL for _ in range(BL)]
+    for py in range(BL):
+        for px in range(BL):
+            if solid[py][px]:
+                img[py][px] = bl_color(*local[py][px])
+
+    # dark outline, except across the bore - the muzzle has to stay open
+    for py in range(BL):
+        for px in range(BL):
+            if not solid[py][px] or img[py][px] in (BORE, BORE_HOT):
+                continue
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                qx, qy = px + dx, py + dy
+                if (qx < 0 or qy < 0 or qx >= BL or qy >= BL
+                        or not solid[qy][qx]):
+                    img[py][px] = OUTLINE_B
+                    break
+    return img
+
+
+# ---------------------------------------------------------------------------
 # Verilog emission: block-ROM arrays initialized in an `initial` block,
 # synchronous 1-clock read (the template Vivado infers RAMB blocks from).
 # ---------------------------------------------------------------------------
@@ -299,7 +422,7 @@ def emit_rom(path, name, desc, addr_w, data_w, out_name, words):
     print(f"wrote {path} ({len(words)} words x {data_w} bits)")
 
 
-def write_previews(outdir, soul, monster):
+def write_previews(outdir, soul, monster, blaster):
     from PIL import Image
 
     os.makedirs(outdir, exist_ok=True)
@@ -321,6 +444,8 @@ def write_previews(outdir, soul, monster):
     for frame, name in enumerate(("soul_whole", "soul_broken")):
         to_img(soul[frame], 16).save(os.path.join(outdir, f"{name}.png"))
     to_img(monster, 8).save(os.path.join(outdir, "monster.png"))
+    for frame, name in enumerate(("blaster_down", "blaster_diag")):
+        to_img(blaster[frame], 12).save(os.path.join(outdir, f"{name}.png"))
     print(f"wrote previews to {outdir}")
 
 
@@ -332,6 +457,11 @@ def main():
     soul = [from_ascii(SOUL_WHOLE, SOUL_PALETTE, 16, 16),
             from_ascii(SOUL_BROKEN, SOUL_PALETTE, 16, 16)]
     monster = build_monster()
+    # frame 0 fires straight down, its muzzle on the bottom edge of the cell;
+    # frame 1 fires down-right, its muzzle pulled in from the corner so the
+    # jaw and the horn tips still fit inside the 32x32 cell
+    blaster = [build_blaster(0, 1, BL / 2, BL),
+               build_blaster(1, 1, BL_DMUZ, BL_DMUZ)]
 
     # soul_rom: addr = {frame, y[3:0], x[3:0]}
     words = []
@@ -358,8 +488,23 @@ def main():
         "// addr = {y[5:0], x[5:0]}.\n",
         12, 12, "color", words)
 
+    # blaster_rom: addr = {frame, y[4:0], x[4:0]}
+    words = []
+    for f in range(2):
+        for y in range(BL):
+            words.extend(blaster[f][y])
+    emit_rom(
+        os.path.join(HDL_DIR, "blaster_rom.v"), "blaster_rom",
+        "// The blaster head (original art): 2 frames of 32x32 px, 12-bit RGB\n"
+        "// (0 = facing straight down, 1 = facing down-right), drawn at 2x\n"
+        "// (64x64) by blaster_renderer, which mirrors and transposes the\n"
+        "// address to reach all eight headings from these two frames.\n"
+        "// 12'hFFF (pure white) = transparent, per the course slides.\n"
+        "// addr = {frame, y[4:0], x[4:0]}.\n",
+        11, 12, "color", words)
+
     if args.preview:
-        write_previews(args.preview, soul, monster)
+        write_previews(args.preview, soul, monster, blaster)
 
 
 if __name__ == "__main__":

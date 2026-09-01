@@ -24,7 +24,14 @@
 //             wave 0 - falling pillars     (type 0, 16x48, straight down)
 //             wave 1 - side-swiping pillars(type 1, 48x16, left/right)
 //             wave 2 - bouncing orbs       (type 2, 12x12, diagonal, walls)
+//             wave 3 - blasters            (blaster_logic; no bullets at all)
 //           Spawns get faster every turn (spawn_period).
+//
+//   The blaster wave is the one attack this module does not draw itself: it
+//   hands the wave over to blaster_logic (which needs the soul's coordinates
+//   to aim) and only takes `blast_hit` and `blast_busy` back, so the turn
+//   still ends here and a beam costs HP through the same mercy-invincibility
+//   path a bullet does.
 //
 // Bullets live in a small register file (NBULLET slots of x/y/vx/vy/type),
 // updated in an unrolled per-frame loop - the classic fixed-object-list
@@ -39,7 +46,8 @@ module battle_logic #(
     parameter integer BOX_W   = 260,
     parameter integer BOX_H   = 160,
     parameter integer BORDER  = 4,     // white frame thickness
-    parameter integer NBULLET = 8
+    parameter integer NBULLET = 8,
+    parameter [9:0]   DODGE_FRAMES = 10'd330   // spawn window per enemy turn
 )(
     input  wire        clk,           // pixel clock
     input  wire        frame_start,   // 1-clk pulse at the start of vblank
@@ -47,6 +55,8 @@ module battle_logic #(
     input  wire        pad_dn,
     input  wire        pad_lf,
     input  wire        pad_rt,
+    input  wire        blast_hit,    // a blaster beam is on the soul
+    input  wire        blast_busy,   // a blaster is still on screen
 
     output reg  [2:0]  state      = 3'd0,
     output reg  [9:0]  timer      = 10'd0,  // frames spent in this state
@@ -60,6 +70,7 @@ module battle_logic #(
     output reg  [4:0]  last_damage= 5'd0,
     output reg  [7:0]  hit_flash  = 8'd0,   // enemy flash/shake, frames
     output reg  [2:0]  round_cnt  = 3'd0,   // turns taken (difficulty ramp)
+    output reg  [1:0]  wave       = 2'd0,   // which attack pattern this turn
     output wire [NBULLET*10-1:0] bullet_x,
     output wire [NBULLET*10-1:0] bullet_y,
     output wire [NBULLET*2-1:0]  bullet_type,
@@ -103,13 +114,14 @@ module battle_logic #(
     localparam [5:0] PLAYER_HP_MAX = 6'd20;
     localparam [5:0] ENEMY_HP_MAX  = 6'd40;
     localparam [5:0] HIT_DMG       = 6'd2;    // HP lost per bullet contact
+    localparam [5:0] BLAST_DMG     = 6'd3;    // ... and per blaster beam
     localparam [6:0] IFRAMES       = 7'd60;   // 1 s of mercy invincibility
     localparam [9:0] HIT_FRAMES    = 10'd75;  // damage read-out length
-    localparam [9:0] DODGE_FRAMES  = 10'd330; // spawn window per turn
     localparam [9:0] DODGE_MAX     = 10'd480; // hard cap incl. bullet drain
     localparam [9:0] CURSOR_SPD    = 10'd7;
     localparam [9:0] CURSOR_W      = 10'd4;
     localparam [9:0] CURSOR_MAX    = INNER_R - CURSOR_W;
+    localparam [1:0] WAVE_BLAST    = 2'd3;   // the wave blaster_logic runs
 
     reg cursor_dir = 1'b0;   // attack cursor: 0 = sweeping right, 1 = left
 
@@ -187,7 +199,10 @@ module battle_logic #(
         end
     endgenerate
 
-    wire any_hit = |hit;
+    wire any_hit  = |hit;
+    // a beam hurts more than a bullet, but goes through the same mercy window
+    wire       took_hit = any_hit | blast_hit;
+    wire [5:0] took_dmg = blast_hit ? BLAST_DMG : HIT_DMG;
 
     // ---- free bullet slot (lowest index wins) ------------------------------
     localparam integer IDXW = (NBULLET > 1) ? $clog2(NBULLET) : 1;
@@ -214,7 +229,6 @@ module battle_logic #(
                             (aim_err < 10'd70) ? 5'd5  : 5'd3;
 
     // ---- spawn cadence: base rate per wave, faster every turn -------------
-    reg [1:0] wave = 2'd0;
     reg [7:0] spawn_t = 8'd0;
     wire [7:0] base_period  = (wave == 2'd0) ? 8'd26 :
                               (wave == 2'd1) ? 8'd30 : 8'd22;
@@ -333,8 +347,9 @@ module battle_logic #(
                     end
                 end
 
-                // 3. spawn the next bullet of this wave
-                if (timer < DODGE_FRAMES) begin
+                // 3. spawn the next bullet of this wave (the blaster wave
+                //    fires no bullets - blaster_logic owns the whole box)
+                if (timer < DODGE_FRAMES && wave != WAVE_BLAST) begin
                     if (spawn_t != 8'd0)
                         spawn_t <= spawn_t - 8'd1;
                     else begin
@@ -370,28 +385,28 @@ module battle_logic #(
                 end
 
                 // 4. contact damage (mercy invincibility gates repeats)
-                if (any_hit && iframes == 7'd0) begin
-                    if (player_hp <= HIT_DMG) begin
+                if (took_hit && iframes == 7'd0) begin
+                    if (player_hp <= took_dmg) begin
                         player_hp     <= 6'd0;
                         state         <= S_LOSE;
                         timer         <= 10'd0;
                         bullet_active <= {NBULLET{1'b0}};
                     end else begin
-                        player_hp <= player_hp - HIT_DMG;
+                        player_hp <= player_hp - took_dmg;
                         iframes   <= IFRAMES;
                     end
                 end
 
                 // 5. turn over once the wave has run and the box is clear
                 else if ((timer >= DODGE_FRAMES &&
-                          bullet_active == {NBULLET{1'b0}}) ||
+                          bullet_active == {NBULLET{1'b0}} && !blast_busy) ||
                          (timer >= DODGE_MAX)) begin
                     state         <= S_AIM;
                     timer         <= 10'd0;
                     bullet_active <= {NBULLET{1'b0}};
                     soul_x        <= SOUL_AIM_X;
                     soul_y        <= SOUL_HOME_Y;
-                    wave          <= (wave == 2'd2) ? 2'd0 : wave + 2'd1;
+                    wave          <= (wave == WAVE_BLAST) ? 2'd0 : wave + 2'd1;
                     if (round_cnt != 3'd7) round_cnt <= round_cnt + 3'd1;
                 end
             end

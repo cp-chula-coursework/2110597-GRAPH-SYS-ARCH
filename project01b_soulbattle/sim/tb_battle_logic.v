@@ -15,17 +15,24 @@
 //              outlasts the player, and check the battle ends in LOSE with
 //              the soul at 0 HP
 //
+// blaster_logic is wired up here exactly as battle_core wires it, so the
+// blaster wave is tested where it actually matters - as part of the turn
+// order. (tb_blaster.v covers its aiming geometry on its own.)
+//
 // Checked along the way, every frame:
 //   - the soul never leaves the inside of the battle box
 //   - HP never exceeds its maximum and never goes negative
-//   - a hit costs exactly 2 HP and cannot repeat within the 60-frame mercy
-//     window (i-frames)
+//   - a bullet costs exactly 2 HP and a blaster beam exactly 3, and neither
+//     can repeat within the 60-frame mercy window (i-frames)
 //   - every live bullet stays inside the spawn/despawn window
 //   - the attack cursor stays inside the box, and a bullseye press really
 //     does score 16 while an edge press scores 3
 //   - the four-way movement clamps against all four walls
+//   - the blaster wave fires no bullets at all, hits a soul that stands
+//     still, and does not hand the turn back while a blaster is on screen
 //
-//   iverilog -o /tmp/tb_logic.vvp hdl/battle_logic.v sim/tb_battle_logic.v
+//   iverilog -o /tmp/tb_logic.vvp hdl/battle_logic.v hdl/blaster_logic.v \
+//     sim/tb_battle_logic.v
 //   vvp /tmp/tb_logic.vvp
 //------------------------------------------------------------------------------
 `timescale 1ns / 1ps
@@ -62,6 +69,7 @@ module tb_battle_logic;
     wire [4:0] last_damage;
     wire [7:0] hit_flash;
     wire [2:0] round_cnt;
+    wire [1:0] wave;
     wire [79:0] bullet_x, bullet_y;
     wire [15:0] bullet_type;
     wire [7:0]  bullet_active;
@@ -73,6 +81,8 @@ module tb_battle_logic;
         .pad_dn        (pad_dn),
         .pad_lf        (pad_lf),
         .pad_rt        (pad_rt),
+        .blast_hit     (blast_hit),
+        .blast_busy    (blast_busy),
         .state         (state),
         .timer         (timer),
         .anim          (anim),
@@ -85,10 +95,43 @@ module tb_battle_logic;
         .last_damage   (last_damage),
         .hit_flash     (hit_flash),
         .round_cnt     (round_cnt),
+        .wave          (wave),
         .bullet_x      (bullet_x),
         .bullet_y      (bullet_y),
         .bullet_type   (bullet_type),
         .bullet_active (bullet_active)
+    );
+
+    // the blaster wave, hooked up the way battle_core hooks it up
+    wire [19:0] bl_mx, bl_my, bl_reach;
+    wire [5:0]  bl_dir, bl_kick;
+    wire [9:0]  bl_hw;
+    wire [3:0]  bl_dim;
+    wire [1:0]  bl_hot, bl_head;
+    wire        blast_hit, blast_busy;
+
+    wire blast_run   = (state == S_DODGE) && (wave == 2'd3);
+    wire blast_spawn = blast_run && (timer < 10'd330);
+
+    blaster_logic blast (
+        .clk         (clk),
+        .frame_start (fs),
+        .run         (blast_run),
+        .spawn_en    (blast_spawn),
+        .soul_x      (soul_x),
+        .soul_y      (soul_y),
+        .round_cnt   (round_cnt),
+        .bl_mx       (bl_mx),
+        .bl_my       (bl_my),
+        .bl_dir      (bl_dir),
+        .bl_hw       (bl_hw),
+        .bl_reach    (bl_reach),
+        .bl_kick     (bl_kick),
+        .bl_dim      (bl_dim),
+        .bl_hot      (bl_hot),
+        .bl_head     (bl_head),
+        .blast_hit   (blast_hit),
+        .blast_busy  (blast_busy)
     );
 
     always #19.861 clk = ~clk;   // ~25.175 MHz
@@ -149,6 +192,7 @@ module tb_battle_logic;
     // ---- per-frame invariants ---------------------------------------------
     integer i;
     reg [5:0] hp_prev = 6'd20;
+    reg [5:0] dmg_want;
     integer   last_hit_frame = -1000;
     reg [9:0] bxi, byi;
 
@@ -163,7 +207,15 @@ module tb_battle_logic;
 
         if (player_hp != hp_prev) begin
             if (player_hp < hp_prev) begin
-                check(hp_prev - player_hp == 6'd2, "a hit did not cost exactly 2 HP");
+                // the blaster wave is the only one with no bullets in it,
+                // so `wave` alone says which kind of hit this was
+                dmg_want = (wave == 2'd3) ? 6'd3 : 6'd2;
+                if (player_hp == 6'd0)
+                    // the killing blow clamps at 0 rather than overshooting
+                    check(hp_prev <= dmg_want, "a fatal hit skipped some HP");
+                else
+                    check(hp_prev - player_hp == dmg_want,
+                          "a hit did not cost the right amount of HP");
                 check(frame_no - last_hit_frame >= 60,
                       "took a second hit inside the mercy window");
                 last_hit_frame = frame_no;
@@ -217,6 +269,8 @@ module tb_battle_logic;
     integer guard;
     integer turns;
     integer sx0, sy0;
+    integer bullets_seen, blast_seen;
+    reg [5:0] hp0;
 
     // ---- watchdog ---------------------------------------------------------
     initial begin
@@ -302,6 +356,64 @@ module tb_battle_logic;
         check(state == S_TITLE, "the game-over screen did not return to the title");
         tap;
         check(state == S_AIM, "could not start a battle after a game over");
+
+        // ---- phase G: the blaster wave --------------------------------------
+        // Ride the turn order round to wave 3 on weak strikes. Waves 0-2 get
+        // dodged blind on the way, so the soul may not survive the trip; if it
+        // doesn't, start a fresh battle and come round again.
+        turns = 0;
+        while (!(state == S_DODGE && wave == 2'd3) && turns < 24) begin
+            if (state == S_WIN || state == S_LOSE) begin
+                step_frames(95);
+                tap;                       // end screen -> attract screen
+                tap;                       // attract screen -> a fresh battle
+            end
+            take_turn(1'b0, 5'd3);
+            guard = 0;                     // let the enemy's turn begin
+            while (state != S_DODGE && state != S_WIN && state != S_LOSE &&
+                   guard < 300) begin
+                next_frame; guard = guard + 1;
+            end
+            if (state == S_DODGE && wave != 2'd3) begin
+                guard = 0;                 // and run a bullet wave out
+                while (state == S_DODGE && guard < 700) begin
+                    next_frame; guard = guard + 1;
+                end
+            end
+            turns = turns + 1;
+        end
+        check(state == S_DODGE && wave == 2'd3,
+              "the turn order never reached the blaster wave");
+
+        // stand still: a beam that has locked on cannot miss
+        hp0          = player_hp;
+        bullets_seen = 0;
+        blast_seen   = 0;
+        guard        = 0;
+        while (state == S_DODGE && player_hp == hp0 && guard < 300) begin
+            if (bullet_active != 8'd0) bullets_seen = bullets_seen + 1;
+            if (blast_busy)            blast_seen   = blast_seen + 1;
+            next_frame; guard = guard + 1;
+        end
+        check(blast_seen > 0, "the blaster wave put no blaster on screen");
+        check(guard < 300, "a soul standing still was never hit by a beam");
+        $display("  blaster wave: first beam landed after %0d frames", guard);
+
+        // then keep moving, and watch the rest of the turn out
+        guard = 0;
+        while (state == S_DODGE && guard < 800) begin
+            if (bullet_active != 8'd0) bullets_seen = bullets_seen + 1;
+            // the turn may not be handed back while a blaster is still up
+            if (timer >= 10'd330)
+                check(!(blast_busy && state != S_DODGE),
+                      "the turn ended with a blaster still on screen");
+            pad_up = ((guard / 24) % 2) == 0;
+            pad_dn = ~pad_up;
+            next_frame; guard = guard + 1;
+        end
+        pad_up = 1'b0; pad_dn = 1'b0;
+        check(bullets_seen == 0, "the blaster wave spawned bullets");
+        check(state != S_DODGE, "the blaster wave never ended");
 
         if (errors == 0)
             $display("ALL TESTS PASSED (%0d game frames simulated)", frame_no);
