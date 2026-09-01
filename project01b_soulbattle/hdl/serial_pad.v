@@ -7,7 +7,11 @@
 // The adapter sends one byte per button rather than the packet its
 // documentation describes:
 //
-//   41 up    42 down    43 left    44 right      (ASCII 'A'..'D')
+//   41 up        42 down     43 left     44 right      ('A'..'D')
+//   49 triangle  4a cross    4b square   4c circle     ('I'..'L')
+//
+// Read off the hardware one button at a time - the adapter's own
+// documentation describes a different scheme entirely.
 //
 // A byte says a button is down; nothing says it has come back up. So each
 // button gets a timer instead: a byte reloads it, the frame tick counts it
@@ -21,15 +25,19 @@
 // lower case - so those clear the timer outright and make letting go instant.
 // If this one does not send them, nothing is lost; the timeout still works.
 //
-// Anything else in the printable range is taken as "confirm", which covers
-// whichever bytes the face buttons and START turn out to send without having
-// to know them in advance.
+// The four face buttons all mean "confirm", as do the other codes in the
+// same run of letters - whichever of them the shoulder buttons and START
+// turn out to be.
 //------------------------------------------------------------------------------
 module serial_pad #(
     parameter [7:0]   CODE_UP     = 8'h41,
     parameter [7:0]   CODE_DOWN   = 8'h42,
     parameter [7:0]   CODE_LEFT   = 8'h43,
     parameter [7:0]   CODE_RIGHT  = 8'h44,
+    parameter [7:0]   CODE_TRI    = 8'h49,   // triangle
+    parameter [7:0]   CODE_CROSS  = 8'h4A,   // cross
+    parameter [7:0]   CODE_SQUARE = 8'h4B,   // square
+    parameter [7:0]   CODE_CIRCLE = 8'h4C,   // circle
     parameter integer HOLD_FRAMES = 12      // ~200 ms at 60 Hz
 )(
     input  wire       clk,
@@ -78,9 +86,15 @@ module serial_pad #(
             REL_DOWN:   t_dn <= 0;
             REL_LEFT:   t_lf <= 0;
             REL_RIGHT:  t_rt <= 0;
+            CODE_TRI, CODE_CROSS, CODE_SQUARE, CODE_CIRCLE:
+                t_ok <= HOLD_FRAMES[TW-1:0];
             default:
-                // any other printable byte means some other button
-                if (data >= 8'h20 && data < 8'h7F)
+                // The four face buttons above are the ones actually read off
+                // the pad. The shoulder buttons, START and SELECT sit in the
+                // same run of letters somewhere and are taken as confirm too,
+                // without needing to know which is which; the range stops
+                // short of the directions and of their lower-case releases.
+                if (data >= 8'h45 && data <= 8'h58)
                     t_ok <= HOLD_FRAMES[TW-1:0];
             endcase
         end

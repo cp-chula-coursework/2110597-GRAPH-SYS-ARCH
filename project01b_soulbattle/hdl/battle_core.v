@@ -181,7 +181,8 @@ module battle_core (
     // left set to, or exactly how it packs the buttons - so nothing is
     // decoded yet. The last eight bytes and the count of frames that arrived
     // without a stop bit are simply put on screen, and the rate can be
-    // stepped through on the board until they make sense.
+    // stepped through on the board until they make sense - which is how the
+    // one this adapter is set to, 9600, was found in the first place.
     function [12:0] baud_div(input [2:0] sel);
         case (sel)
         3'd0: baud_div = 13'd2622;    //   9600
@@ -195,7 +196,7 @@ module battle_core (
     // left and right together, held, steps the rate - not a move the game can
     // use, and it has to be held so a scramble mid-dodge cannot trip it
     localparam [5:0] CHORD_HOLD = 6'd45;      // 0.75 s
-    reg [2:0] baud_sel  = 3'd4;               // 115200 to start with
+    reg [2:0] baud_sel  = 3'd0;               // 9600 - what the adapter uses
     reg [5:0] baud_hold = 6'd0;
     wire chord_baud = pad[2] & pad[3];
 
@@ -208,7 +209,7 @@ module battle_core (
 
     // stepping the rate restarts the error count, so what is on screen is
     // always about the rate being tried now and not a previous guess
-    reg [2:0] baud_sel_d = 3'd4;
+    reg [2:0] baud_sel_d = 3'd0;
     reg       baud_changed = 1'b0;
     always @(posedge clk) begin
         baud_sel_d   <= baud_sel;

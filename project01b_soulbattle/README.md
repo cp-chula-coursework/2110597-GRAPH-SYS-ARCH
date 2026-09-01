@@ -116,8 +116,17 @@ Power it from 3.3V rather than the 5V on pin 2: at 3.3V its TXD swings 3.3V
 and can be wired straight in.
 
 This particular adapter turned out to send one byte per button rather than
-the 8-byte packet its documentation describes - `41` up, `42` down, `43`
-left, `44` right - at 9600 baud. Nothing says when a button is released, so
+the 8-byte packet its documentation describes, at 9600 baud:
+
+| Byte | Button | | Byte | Button |
+|------|--------|-|------|--------|
+| `41` | up | | `49` | triangle |
+| `42` | down | | `4a` | cross |
+| `43` | left | | `4b` | square |
+| `44` | right | | `4c` | circle |
+
+All four face buttons confirm, as do the neighbouring codes the shoulder
+buttons and START land on. Nothing says when a button is released, so
 `serial_pad.v` gives each button a timer that an arriving byte reloads and
 the frame tick counts down; a button reads as held while its timer runs.
 
