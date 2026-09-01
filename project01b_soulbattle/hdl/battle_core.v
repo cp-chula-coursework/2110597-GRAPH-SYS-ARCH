@@ -63,7 +63,8 @@ module battle_core (
     // spawn window of an enemy turn, shared by the bullet waves and the
     // blaster wave so both stop feeding the box at the same moment
     localparam [9:0]   DODGE_FRAMES = 10'd330;
-    localparam [1:0]   WAVE_BLAST   = 2'd3;
+    localparam [2:0]   WAVE_BLAST   = 3'd3;
+    localparam [2:0]   WAVE_RING    = 3'd4;
 
     localparam [2:0] S_TITLE = 3'd0,
                      S_DODGE = 3'd3,
@@ -287,7 +288,7 @@ module battle_core (
     wire [4:0] last_damage;
     wire [7:0] hit_flash;
     wire [2:0] round_cnt;
-    wire [1:0] wave;
+    wire [2:0] wave;
     wire [NBULLET*10-1:0] bullet_x, bullet_y;
     wire [NBULLET*2-1:0]  bullet_type;
     wire [NBULLET-1:0]    bullet_active;
@@ -335,7 +336,9 @@ module battle_core (
     wire [NBLAST*2-1:0]  bl_dim;
     wire [NBLAST-1:0]    bl_hot, bl_head;
 
-    wire blast_run   = (state == S_DODGE) && (wave == WAVE_BLAST);
+    wire blast_ring  = (wave == WAVE_RING);
+    wire blast_run   = (state == S_DODGE) &&
+                       ((wave == WAVE_BLAST) || blast_ring);
     wire blast_spawn = blast_run && (timer < DODGE_FRAMES);
 
     blaster_logic #(
@@ -346,6 +349,7 @@ module battle_core (
         .frame_start (frame_start),
         .run         (blast_run),
         .spawn_en    (blast_spawn),
+        .ring        (blast_ring),
         .soul_x      (soul_x),
         .soul_y      (soul_y),
         .round_cnt   (round_cnt),

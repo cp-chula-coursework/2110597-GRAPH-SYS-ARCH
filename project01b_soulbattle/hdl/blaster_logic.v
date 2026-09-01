@@ -40,6 +40,13 @@
 // The muzzle keeps tracking the soul for the whole TRACK phase - the skull
 // visibly slides along the rim after you - and freezes when CHARGE starts, so
 // the warning line always shows exactly where the beam will be.
+//
+// `ring` turns the same machinery into a second, faster wave: the heading
+// walks one compass point round per blaster rather than being drawn at
+// random, and every phase is shortened, so they come three times as often and
+// sweep a full circle about the soul. Nothing else changes - each muzzle is
+// still solved the same way, so every beam in the circle still passes exactly
+// through the soul from wherever on the rim its heading reaches it.
 //------------------------------------------------------------------------------
 module blaster_logic #(
     parameter integer BOX_L  = 190,   // battle box, outer top-left
@@ -52,6 +59,8 @@ module blaster_logic #(
     input  wire       frame_start,    // 1-clk pulse at the start of vblank
     input  wire       run,            // the blaster wave owns the enemy turn
     input  wire       spawn_en,       // ... and is still inside its spawn window
+    input  wire       ring,           // sweep the headings round instead of
+                                      // picking each one at random
     input  wire [9:0] soul_x,         // soul sprite top-left
     input  wire [9:0] soul_y,
     input  wire [2:0] round_cnt,      // difficulty ramp
@@ -93,6 +102,17 @@ module blaster_logic #(
     localparam [7:0] FIRE_F  = 8'd20;
     localparam [7:0] FADE_F  = 8'd10;
 
+    // The ring wave puts one up every 18 frames instead of every 54, and each
+    // lives 46 frames instead of 74, so three or four are on screen at once
+    // sweeping round. Everything is shortened except the warning, which is
+    // only cut to 16 frames: it is the one thing standing between the player
+    // and an attack that cannot be dodged.
+    localparam [7:0] RING_TRACK  = 8'd10;
+    localparam [7:0] RING_CHARGE = 8'd16;
+    localparam [7:0] RING_FIRE   = 8'd14;
+    localparam [7:0] RING_FADE   = 8'd6;
+    localparam [7:0] RING_GAP    = 8'd18;
+
     localparam [4:0] FULL_HW    = 5'd9;      // 19 px of beam at full width
     localparam [9:0] REACH_STEP = 10'd72;    // px/frame the beam reaches out
     localparam [9:0] REACH_MAX  = 10'd1023;
@@ -114,8 +134,13 @@ module blaster_logic #(
     // later turns give less warning and send blasters closer together
     wire [7:0] round_x2  = {4'd0, round_cnt, 1'b0};
     wire [7:0] round_x4  = {3'd0, round_cnt, 2'd0};
-    wire [7:0] charge_f  = (round_x2 < 8'd12) ? (8'd26 - round_x2) : 8'd14;
-    wire [7:0] gap_frames= (round_x4 < 8'd24) ? (8'd54 - round_x4) : 8'd30;
+    wire [7:0] charge_f  = ring ? RING_CHARGE :
+                           (round_x2 < 8'd12) ? (8'd26 - round_x2) : 8'd14;
+    wire [7:0] gap_frames= ring ? RING_GAP :
+                           (round_x4 < 8'd24) ? (8'd54 - round_x4) : 8'd30;
+    wire [7:0] track_f   = ring ? RING_TRACK : TRACK_F;
+    wire [7:0] fire_f    = ring ? RING_FIRE  : FIRE_F;
+    wire [7:0] fade_f    = ring ? RING_FADE  : FADE_F;
 
     // ---- pseudo-random source ----------------------------------------------
     // Its own LFSR, seeded differently from battle_logic's, so the side a
@@ -142,10 +167,19 @@ module blaster_logic #(
     // half diagonal, quarter vertical, quarter horizontal
     wire [1:0] family = lfsr[6:5];
 
-    wire [2:0] dir_new = (family == 2'd2) ? (from_above ? D_S : D_N) :
-                         (family == 2'd3) ? (from_left  ? D_E : D_W) :
-                         from_above ? (from_left ? D_SE : D_SW)
-                                    : (from_left ? D_NE : D_NW);
+    wire [2:0] dir_rand = (family == 2'd2) ? (from_above ? D_S : D_N) :
+                          (family == 2'd3) ? (from_left  ? D_E : D_W) :
+                          from_above ? (from_left ? D_SE : D_SW)
+                                     : (from_left ? D_NE : D_NW);
+
+    // The ring wave walks the heading round one compass point per blaster, so
+    // the attack sweeps a circle about the soul instead of landing wherever a
+    // random draw puts it. Where it starts and which way it goes are drawn
+    // once per turn: the sweep should be readable, not memorisable.
+    reg [2:0] ring_dir = 3'd0;
+    reg       ring_cw  = 1'b0;
+
+    wire [2:0] dir_new = ring ? ring_dir : dir_rand;
 
     // ---- solve the muzzle: the point on the rim this heading aims from ------
     function [19:0] muzzle(input [2:0] d, input [9:0] px, input [9:0] py);
@@ -167,18 +201,18 @@ module blaster_logic #(
     endfunction
 
     // ---- beam width and head presentation, both pure functions of phase ----
-    function [4:0] hw_of(input [2:0] s, input [7:0] t);
+    function [4:0] hw_of(input [2:0] s, input [7:0] t, input [7:0] ff);
         begin
             if (s == P_CHARGE)
                 hw_of = 5'd1;                       // the 3 px warning line
             else if (s == P_FIRE) begin
-                if      (t == 8'd0)           hw_of = 5'd3;   // snapping open
-                else if (t == 8'd1)           hw_of = 5'd6;
-                else if (t <  FIRE_F - 8'd4)  hw_of = FULL_HW;
-                else if (t == FIRE_F - 8'd4)  hw_of = 5'd7;   // and closing
-                else if (t == FIRE_F - 8'd3)  hw_of = 5'd5;
-                else if (t == FIRE_F - 8'd2)  hw_of = 5'd3;
-                else                          hw_of = 5'd1;
+                if      (t == 8'd0)       hw_of = 5'd3;       // snapping open
+                else if (t == 8'd1)       hw_of = 5'd6;
+                else if (t <  ff - 8'd4)  hw_of = FULL_HW;
+                else if (t == ff - 8'd4)  hw_of = 5'd7;       // and closing
+                else if (t == ff - 8'd3)  hw_of = 5'd5;
+                else if (t == ff - 8'd2)  hw_of = 5'd3;
+                else                      hw_of = 5'd1;
             end else
                 hw_of = 5'd0;
         end
@@ -232,7 +266,7 @@ module blaster_logic #(
     generate
         for (g = 0; g < NBLAST; g = g + 1) begin : g_slot
             wire [2:0] dg  = dr[g];
-            wire [4:0] hwg = hw_of(st[g], pt[g]);
+            wire [4:0] hwg = hw_of(st[g], pt[g], fire_f);
 
             assign bl_mx   [10*g +: 10] = mx[g];
             assign bl_my   [10*g +: 10] = my[g];
@@ -305,7 +339,9 @@ module blaster_logic #(
                     st[i] <= P_IDLE;
                     pt[i] <= 8'd0;
                 end
-                gap <= 8'd10;
+                gap      <= 8'd10;
+                ring_dir <= lfsr[2:0];        // a fresh place to start
+                ring_cw  <= lfsr[7];          // and a fresh way round
             end else begin
                 for (i = 0; i < NBLAST; i = i + 1) begin
                     case (st[i])
@@ -315,7 +351,7 @@ module blaster_logic #(
                     P_TRACK: begin
                         mx[i] <= mzb[20*i + 10 +: 10];
                         my[i] <= mzb[20*i +: 10];
-                        if (pt[i] + 8'd1 >= TRACK_F) begin
+                        if (pt[i] + 8'd1 >= track_f) begin
                             st[i] <= P_CHARGE;
                             pt[i] <= 8'd0;
                         end else
@@ -336,7 +372,7 @@ module blaster_logic #(
                     P_FIRE: begin
                         rch[i] <= (rch[i] > REACH_MAX - REACH_STEP)
                                     ? REACH_MAX : rch[i] + REACH_STEP;
-                        if (pt[i] + 8'd1 >= FIRE_F) begin
+                        if (pt[i] + 8'd1 >= fire_f) begin
                             st[i] <= P_FADE;
                             pt[i] <= 8'd0;
                         end else
@@ -344,7 +380,7 @@ module blaster_logic #(
                     end
 
                     P_FADE: begin
-                        if (pt[i] + 8'd1 >= FADE_F) begin
+                        if (pt[i] + 8'd1 >= fade_f) begin
                             st[i] <= P_IDLE;
                             pt[i] <= 8'd0;
                         end else
@@ -367,7 +403,10 @@ module blaster_logic #(
                         mx [free_idx] <= mz_new[19:10];
                         my [free_idx] <= mz_new[9:0];
                         rch[free_idx] <= REACH_MAX;   // the warning line spans
-                    end                               // the whole box
+                        if (ring)                     // the whole box
+                            ring_dir <= ring_cw ? ring_dir + 3'd1
+                                                : ring_dir - 3'd1;
+                    end
                 end
             end
         end

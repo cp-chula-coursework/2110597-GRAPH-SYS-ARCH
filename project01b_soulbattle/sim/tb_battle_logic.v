@@ -33,8 +33,8 @@
 //     does score 16 while an edge press scores 3
 //   - the four-way movement clamps against all four walls, and the gamepad's
 //     separate confirm button works without being one of them
-//   - the blaster wave fires no bullets at all, hits a soul that stands
-//     still, and does not hand the turn back while a blaster is on screen
+//   - the blaster waves fire no bullets at all, hit a soul that stands
+//     still, and do not hand the turn back while a blaster is on screen
 //
 //   iverilog -o /tmp/tb_logic.vvp hdl/battle_logic.v hdl/blaster_logic.v \
 //     sim/tb_battle_logic.v
@@ -76,7 +76,7 @@ module tb_battle_logic;
     wire [4:0] last_damage;
     wire [7:0] hit_flash;
     wire [2:0] round_cnt;
-    wire [1:0] wave;
+    wire [2:0] wave;
     wire [79:0] bullet_x, bullet_y;
     wire [15:0] bullet_type;
     wire [7:0]  bullet_active;
@@ -118,7 +118,8 @@ module tb_battle_logic;
     wire [1:0]  bl_hot, bl_head;
     wire        blast_hit, blast_busy;
 
-    wire blast_run   = (state == S_DODGE) && (wave == 2'd3);
+    wire blast_ring  = (wave == 3'd4);
+    wire blast_run   = (state == S_DODGE) && ((wave == 3'd3) || blast_ring);
     wire blast_spawn = blast_run && (timer < 10'd330);
 
     blaster_logic blast (
@@ -126,6 +127,7 @@ module tb_battle_logic;
         .frame_start (fs),
         .run         (blast_run),
         .spawn_en    (blast_spawn),
+        .ring        (blast_ring),
         .soul_x      (soul_x),
         .soul_y      (soul_y),
         .round_cnt   (round_cnt),
@@ -311,9 +313,9 @@ module tb_battle_logic;
 
         if (player_hp != hp_prev) begin
             if (player_hp < hp_prev) begin
-                // the blaster wave is the only one with no bullets in it,
-                // so `wave` alone says which kind of hit this was
-                dmg_want = (wave == 2'd3) ? 6'd3 : 6'd2;
+                // the blaster waves are the only ones with no bullets in
+                // them, so `wave` alone says which kind of hit this was
+                dmg_want = (wave >= 3'd3) ? 6'd3 : 6'd2;
                 if (player_hp == 6'd0)
                     // the killing blow clamps at 0 rather than overshooting
                     check(hp_prev <= dmg_want, "a fatal hit skipped some HP");
@@ -470,7 +472,7 @@ module tb_battle_logic;
         // dodged blind on the way, so the soul may not survive the trip; if it
         // doesn't, start a fresh battle and come round again.
         turns = 0;
-        while (!(state == S_DODGE && wave == 2'd3) && turns < 24) begin
+        while (!(state == S_DODGE && wave == 3'd3) && turns < 24) begin
             if (state == S_WIN || state == S_LOSE) begin
                 step_frames(95);
                 tap;                       // end screen -> attract screen
@@ -482,7 +484,7 @@ module tb_battle_logic;
                    guard < 300) begin
                 next_frame; guard = guard + 1;
             end
-            if (state == S_DODGE && wave != 2'd3) begin
+            if (state == S_DODGE && wave != 3'd3) begin
                 guard = 0;                 // and run a bullet wave out
                 while (state == S_DODGE && guard < 700) begin
                     next_frame; guard = guard + 1;
@@ -490,7 +492,7 @@ module tb_battle_logic;
             end
             turns = turns + 1;
         end
-        check(state == S_DODGE && wave == 2'd3,
+        check(state == S_DODGE && wave == 3'd3,
               "the turn order never reached the blaster wave");
 
         // stand still: a beam that has locked on cannot miss
@@ -522,6 +524,33 @@ module tb_battle_logic;
         pad_up = 1'b0; pad_dn = 1'b0;
         check(bullets_seen == 0, "the blaster wave spawned bullets");
         check(state != S_DODGE, "the blaster wave never ended");
+
+        // ---- phase H: the ring wave is the very next turn -------------------
+        // It is the same module in a faster mode, so all that is checked here
+        // is that the turn order really does reach it and that it too fires
+        // no bullets.
+        guard = 0;
+        while (!(state == S_DODGE && wave == 3'd4) && guard < 900 &&
+               state != S_WIN && state != S_LOSE) begin
+            if (state == S_AIM) begin arm; strike; end
+            else                     play_frame;
+            guard = guard + 1;
+        end
+        if (state == S_DODGE && wave == 3'd4) begin
+            bullets_seen = 0;
+            blast_seen   = 0;
+            guard = 0;
+            while (state == S_DODGE && guard < 800) begin
+                if (bullet_active != 8'd0) bullets_seen = bullets_seen + 1;
+                if (blast_busy)            blast_seen   = blast_seen + 1;
+                play_frame; guard = guard + 1;
+            end
+            check(bullets_seen == 0, "the ring wave spawned bullets");
+            check(blast_seen > 0, "the ring wave put no blaster on screen");
+            $display("  ring wave: reached, %0d frames with a blaster up",
+                     blast_seen);
+        end else
+            $display("  ring wave: battle ended before it came round");
 
         if (errors == 0)
             $display("ALL TESTS PASSED (%0d game frames simulated)", frame_no);

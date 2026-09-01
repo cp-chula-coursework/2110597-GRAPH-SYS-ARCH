@@ -39,7 +39,7 @@ module tb_blaster;
     localparam P_IDLE = 0, P_TRACK = 1, P_CHARGE = 2, P_FIRE = 3, P_FADE = 4;
 
     reg clk = 1'b0;
-    reg run = 1'b0, spawn_en = 1'b0;
+    reg run = 1'b0, spawn_en = 1'b0, ring = 1'b0;
     reg [9:0] soul_x = 10'd312, soul_y = 10'd322;   // centre of the box
     reg [2:0] round_cnt = 3'd3;
 
@@ -63,6 +63,7 @@ module tb_blaster;
         .frame_start (fs),
         .run         (run),
         .spawn_en    (spawn_en),
+        .ring        (ring),
         .soul_x      (soul_x),
         .soul_y      (soul_y),
         .round_cnt   (round_cnt),
@@ -185,7 +186,9 @@ module tb_blaster;
         $finish;
     end
 
-    integer guard;
+    integer guard, g2;
+    integer ring_step, ring_delta;
+    reg [2:0] ring_prev;
     integer hit_frames;
     reg [9:0] lock_x, lock_y;
 
@@ -270,6 +273,39 @@ module tb_blaster;
         step_frames(2500);
         check(seen_dir == 8'hFF, "some of the eight headings never came up");
         $display("  headings seen: %b", seen_dir);
+
+        // ---- the ring wave sweeps rather than scatters ----------------------
+        // The heading counter should walk one compass point per blaster, the
+        // same way every time, all the way round - watched at the counter
+        // itself rather than at a slot, since the two slots take alternate
+        // headings between them.
+        run = 1'b0; spawn_en = 1'b0;
+        step_frames(4);
+        seen_dir  = 8'd0;
+        round_cnt = 3'd0;
+        ring = 1'b1;
+        run = 1'b1; spawn_en = 1'b1;
+
+        ring_step = 0;
+        for (guard = 0; guard < 8; guard = guard + 1) begin
+            ring_prev = dut.ring_dir;
+            g2 = 0;
+            while (dut.ring_dir == ring_prev && g2 < 300) begin
+                next_frame; g2 = g2 + 1;
+            end
+            check(g2 < 300, "the ring stopped putting blasters up");
+            ring_delta = (dut.ring_dir - ring_prev) & 3'd7;
+            check(ring_delta == 1 || ring_delta == 7,
+                  "a ring heading jumped more than one compass point");
+            if (ring_step == 0) ring_step = ring_delta;
+            check(ring_delta == ring_step,
+                  "the ring changed direction part way round");
+            check(g2 <= 30, "the ring wave is not faster than the ordinary one");
+        end
+        check(seen_dir == 8'hFF, "the ring did not sweep all the way round");
+        $display("  ring: swept all 8 headings, step %0d, %0d frames apart",
+                 ring_step, g2);
+        ring = 1'b0;
 
         // ---- ending the wave clears the screen -----------------------------
         run = 1'b0; spawn_en = 1'b0;

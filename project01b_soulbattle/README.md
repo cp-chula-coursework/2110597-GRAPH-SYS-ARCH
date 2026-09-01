@@ -256,6 +256,8 @@ Notes:
   - **wave 1** - pillars swiping in from the left or right at random y
   - **wave 2** - orbs dropping diagonally and bouncing off the side walls
   - **wave 3** - blasters (see below); this wave fires no bullets at all
+  - **wave 4** - blasters again, sweeping a circle around the soul three
+    times as fast
 
   Spawns get 2 frames closer together each turn, floored at 8 (`spawn_period`,
   26 frames down to 12 on the pillar wave, down to 8 on the orbs).
@@ -299,6 +301,19 @@ Two blasters can be on screen at once, a new one every ~54 frames (~30 by the
 last turn), each one living 74 frames from fade-in to fade-out. Standing in a
 firing beam costs 3 HP where a bullet costs 2, through the same 60-frame mercy
 window.
+
+**The ring.** Wave 4 is the same module with one thing changed: instead of
+drawing each heading at random it walks the compass one point at a time, so
+the attack sweeps a full circle about the soul. Every phase is shortened -
+one blaster every 18 frames instead of 54, alive for 46 instead of 74 - so
+three or four are on screen at once, trailing round. The warning is cut least
+of all, to 16 frames: it is the one thing between the player and an attack
+that cannot be dodged. Where the sweep starts and which way it turns are
+drawn once per turn, so it stays readable without being memorisable.
+
+Because the muzzle is still solved the same way, every beam in the circle
+still passes exactly through the soul - the sweep is not decoration around a
+fixed target, it is eight aimed shots in a row from eight different sides.
 
 **How it aims.** The heading is picked at random from eight compass points,
 and then the muzzle is *solved for*: given a soul centre and a heading, there
@@ -375,6 +390,11 @@ Notes on the design decisions a hardwired console forces:
   serves whichever band the beam is in.
 - **All layers have the same 2-clock latency**, so the compositor is a plain
   priority mux and the sync signals just ride a matching 2-stage delay.
+- **A circling attack for free.** The ring wave needed no sine table, no
+  multiplier and nothing new in the renderer: with the heading already
+  quantized to eight compass points, sweeping a circle is a counter that steps
+  by one. What made the first blaster wave cheap is what made the second one
+  nearly free.
 - **Eight headings, so a beam is still just a comparator.** With the aim
   quantized to the compass points, "inside the beam" is `|across| <= width`
   and `0 <= down <= reach`, where `across` and `down` are `dx`, `dy`, `dx+dy`
@@ -460,7 +480,10 @@ Before targeting hardware:
   no muzzle is ever closer than the 40 px minimum lead; the phases run
   TRACK -> CHARGE -> FIRE -> FADE with no beam while tracking and a 3 px line
   while charging; a soul that stands still is hit and one that steps aside
-  after the lock is not; and all eight headings really do come up.
+  after the lock is not; and all eight headings really do come up. In ring
+  mode it also checks that the heading walks one compass point at a time,
+  always the same way round, all the way through the circle, and that
+  blasters come far closer together than in the ordinary wave.
 - `sim/tb_soulbattle.v` runs the whole core at real 640x480@60 timing,
   checks the video timing the HDMI encoder depends on (exactly 640x480
   active pixels and 525 lines per frame), and dumps one frame of each screen

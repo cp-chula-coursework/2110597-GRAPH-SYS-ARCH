@@ -70,6 +70,18 @@ module tb_blaster_draw;
     integer rl, rr, rt, rb, t;
     integer mxi, myi;
 
+    // the same, but with the beam width given rather than implied, for
+    // drawing a sweep caught part way round
+    task place_hw(input integer slot, input integer d, input integer hw,
+                  input integer hot, input integer reach);
+        begin
+            place(slot, d, 1'b0, reach);
+            bl_hw [5*slot +: 5] = hw[4:0];
+            bl_hot[slot]        = hot[0];
+            bl_kick[3*slot +: 3]= hot[0] ? 3'd4 : 3'd0;
+        end
+    endtask
+
     task place(input integer slot, input integer d, input integer firing,
                input integer reach);
         begin
@@ -172,6 +184,21 @@ module tb_blaster_draw;
         place(7, D_SW, 1, 72);
 
         dump("soulbattle_blaster_growing.ppm");
+
+        // ---- the ring wave, caught part way round --------------------------
+        // Successive headings at successive stages: the oldest beams thinning
+        // out as they fade, the newest still only a warning line.
+        bl_head = 8'h00;  bl_hw = 40'd0;  bl_hot = 8'h00;
+        place_hw(0, D_S,  2, 1, 1023);    // firing, nearly done
+        place_hw(1, D_SE, 5, 1, 1023);
+        place_hw(2, D_E,  9, 1, 1023);    // full width
+        place_hw(3, D_NE, 9, 1,  400);    // still growing
+        place_hw(4, D_N,  6, 1,  180);
+        place_hw(5, D_NW, 1, 0, 1023);    // warning line only
+        place_hw(6, D_W,  1, 0, 1023);
+        bl_head[7] = 1'b0;                // the eighth has not appeared yet
+
+        dump("soulbattle_blaster_ring.ppm");
         $finish;
     end
 

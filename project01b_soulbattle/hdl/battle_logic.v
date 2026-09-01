@@ -25,6 +25,8 @@
 //             wave 1 - side-swiping pillars(type 1, 48x16, left/right)
 //             wave 2 - bouncing orbs       (type 2, 12x12, diagonal, walls)
 //             wave 3 - blasters            (blaster_logic; no bullets at all)
+//             wave 4 - blasters sweeping a circle around the soul, three
+//                      times as fast (blaster_logic again, in ring mode)
 //           Spawns get faster every turn (spawn_period).
 //
 //   The blaster wave is the one attack this module does not draw itself: it
@@ -71,7 +73,7 @@ module battle_logic #(
     output reg  [4:0]  last_damage= 5'd0,
     output reg  [7:0]  hit_flash  = 8'd0,   // enemy flash/shake, frames
     output reg  [2:0]  round_cnt  = 3'd0,   // turns taken (difficulty ramp)
-    output reg  [1:0]  wave       = 2'd0,   // which attack pattern this turn
+    output reg  [2:0]  wave       = 3'd0,   // which attack pattern this turn
     output wire [NBULLET*10-1:0] bullet_x,
     output wire [NBULLET*10-1:0] bullet_y,
     output wire [NBULLET*2-1:0]  bullet_type,
@@ -122,7 +124,8 @@ module battle_logic #(
     localparam [9:0] CURSOR_SPD    = 10'd7;
     localparam [9:0] CURSOR_W      = 10'd4;
     localparam [9:0] CURSOR_MAX    = INNER_R - CURSOR_W;
-    localparam [1:0] WAVE_BLAST    = 2'd3;   // the wave blaster_logic runs
+    localparam [2:0] WAVE_BLAST    = 3'd3;   // blasters, from random sides
+    localparam [2:0] WAVE_RING     = 3'd4;   // blasters, sweeping a circle
 
     reg cursor_dir = 1'b0;   // attack cursor: 0 = sweeping right, 1 = left
 
@@ -234,8 +237,8 @@ module battle_logic #(
 
     // ---- spawn cadence: base rate per wave, faster every turn -------------
     reg [7:0] spawn_t = 8'd0;
-    wire [7:0] base_period  = (wave == 2'd0) ? 8'd26 :
-                              (wave == 2'd1) ? 8'd30 : 8'd22;
+    wire [7:0] base_period  = (wave == 3'd0) ? 8'd26 :
+                              (wave == 3'd1) ? 8'd30 : 8'd22;
     // 2 frames faster per turn. The enemy has 120 HP, i.e. seven turns even
     // for a player hitting bullseyes, so the ramp has to be gentle enough to
     // still be survivable at the end of one - a steeper one fills the box
@@ -357,7 +360,8 @@ module battle_logic #(
 
                 // 3. spawn the next bullet of this wave (the blaster wave
                 //    fires no bullets - blaster_logic owns the whole box)
-                if (timer < DODGE_FRAMES && wave != WAVE_BLAST) begin
+                if (timer < DODGE_FRAMES && wave != WAVE_BLAST &&
+                    wave != WAVE_RING) begin
                     if (spawn_t != 8'd0)
                         spawn_t <= spawn_t - 8'd1;
                     else begin
@@ -365,14 +369,14 @@ module battle_logic #(
                         if (free_ok) begin
                             bullet_active[free_idx] <= 1'b1;
                             case (wave)
-                            2'd0: begin  // falling pillar
+                            3'd0: begin  // falling pillar
                                 btype[free_idx] <= 2'd0;
                                 bx[free_idx]    <= INNER_L + rnd_vx;
                                 by[free_idx]    <= INNER_T - 10'd48;
                                 bvx[free_idx]   <= 5'sd0;
                                 bvy[free_idx]   <= lfsr[9] ? 5'sd4 : 5'sd3;
                             end
-                            2'd1: begin  // side-swiping pillar
+                            3'd1: begin  // side-swiping pillar
                                 btype[free_idx] <= 2'd1;
                                 bx[free_idx]    <= lfsr[10] ? INNER_R + 10'd1
                                                             : INNER_L - 10'd48;
@@ -414,7 +418,7 @@ module battle_logic #(
                     bullet_active <= {NBULLET{1'b0}};
                     soul_x        <= SOUL_AIM_X;
                     soul_y        <= SOUL_HOME_Y;
-                    wave          <= (wave == WAVE_BLAST) ? 2'd0 : wave + 2'd1;
+                    wave          <= (wave == WAVE_RING) ? 3'd0 : wave + 3'd1;
                     if (round_cnt != 3'd7) round_cnt <= round_cnt + 3'd1;
                 end
             end
