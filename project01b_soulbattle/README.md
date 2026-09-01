@@ -21,7 +21,7 @@ along.
                     |    (128x128)   |      idle bob + shake/flash when hit
                     +----------------+
                        ROOT SENTINEL          <- enemy name / DAMAGE nn
-                  [##############------]      <- enemy HP (40)
+                  [##############------]      <- enemy HP (120)
 
         +--------------------------------------------+
         |                                            |  <- battle box
@@ -31,7 +31,7 @@ along.
         +--------------------------------------------+
                       PRESS TO STRIKE!                <- phase hint
 
-            HP  [####################]  20 / 20      <- player HP
+            HP  [####################]  40 / 40      <- player HP
 ```
 
 ## Why this is still the Pong assignment
@@ -102,15 +102,19 @@ screen instead.
   - **wave 2** - orbs dropping diagonally and bouncing off the side walls
   - **wave 3** - blasters (see below); this wave fires no bullets at all
 
-  Spawns get faster each turn (`spawn_period`, 26 frames down to 8).
-- **WIN / LOSE.** Enemy at 0 HP wins the battle; your 20 HP running out ends
+  Spawns get 2 frames closer together each turn, floored at 8 (`spawn_period`,
+  26 frames down to 12 on the pillar wave, down to 8 on the orbs).
+- **WIN / LOSE.** Enemy at 0 HP wins the battle; your 40 HP running out ends
   it. Either way the screen holds for 90 frames, then any button returns to
   the attract screen for a rematch.
 
-A full win takes three perfect strikes (16 x 3 = 48 >= 40 HP) with two enemy
-turns in between, so one battle runs about 20 seconds - a single stage, as
-intended. Playing badly on purpose is what gets you as far as the blaster
-wave, which is the fourth enemy turn.
+A full win takes eight perfect strikes (16 x 8 = 128 >= 120 HP) with seven
+enemy turns in between, so one battle runs about a minute - still a single
+stage, but long enough for the wave cycle to come all the way round to the
+blasters on the fourth enemy turn and start over. The enemy's 120 HP is what
+sets that length: at 40 HP a good player finished in three strikes and never
+saw past wave 1, which is why the player's own HP and the spawn-rate ramp are
+scaled to match.
 
 ## The blaster wave
 
@@ -259,7 +263,10 @@ Before targeting hardware:
 - `sim/tb_battle_logic.v` drives the game logic with synthetic frame pulses
   (20 clocks apart instead of a real 420,000-clock frame), which makes it
   practical to play the battle out twice through the real button interface:
-  once winning with bullseye strikes, once losing with weak ones. It checks
+  once winning with bullseye strikes while a small avoidance policy dodges
+  the bullets for the seven enemy turns that takes, once losing with weak
+  strikes and no dodging at all. The winning run is also the check that a
+  120 HP enemy is still beatable. It checks
   the win and loss paths, restart-from-title, that a bullseye scores 16 and
   an edge press scores 3, that all four wall clamps and diagonal movement
   work, that a hit costs exactly 2 HP and cannot repeat inside the 60-frame

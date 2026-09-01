@@ -92,7 +92,8 @@ module battle_core (
     wire [9:0] timer;
     wire [7:0] anim;
     wire [9:0] soul_x, soul_y;
-    wire [5:0] player_hp, enemy_hp;
+    wire [5:0] player_hp;
+    wire [6:0] enemy_hp;
     wire [6:0] iframes;
     wire [9:0] cursor_x;
     wire [4:0] last_damage;

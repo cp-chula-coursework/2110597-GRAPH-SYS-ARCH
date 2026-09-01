@@ -9,8 +9,12 @@
 //
 // Plays the battle twice through the actual button interface:
 //
-//   win  run - strike on the bullseye every turn (16 damage), survive the
-//              enemy's turns, and check the battle ends in WIN
+//   win  run - strike on the bullseye every turn (16 damage), dodge the
+//              enemy's turns with the simple avoidance policy below, and
+//              check the battle ends in WIN. At 120 enemy HP that is eight
+//              strikes and seven enemy turns, which no amount of standing
+//              still survives - so this run is also the check that the
+//              battle is winnable at all.
 //   lose run - strike at the far edge every turn (3 damage) so the enemy
 //              outlasts the player, and check the battle ends in LOSE with
 //              the soul at 0 HP
@@ -63,7 +67,8 @@ module tb_battle_logic;
     wire [9:0] timer;
     wire [7:0] anim;
     wire [9:0] soul_x, soul_y;
-    wire [5:0] player_hp, enemy_hp;
+    wire [5:0] player_hp;
+    wire [6:0] enemy_hp;
     wire [6:0] iframes;
     wire [9:0] cursor_x;
     wire [4:0] last_damage;
@@ -189,9 +194,92 @@ module tb_battle_logic;
         end
     endtask
 
+    // ---- a player that actually dodges -------------------------------------
+    // Reads the live bullet file the way a person reads the box: anything
+    // falling towards the soul is stepped around sideways, anything sweeping
+    // in from the side is stepped over or under. Crude, but it is the
+    // difference between surviving seven enemy turns and dying in three.
+    reg dodge_on = 1'b0;
+
+    task release_pads;
+        begin
+            pad_up = 1'b0; pad_dn = 1'b0; pad_lf = 1'b0; pad_rt = 1'b0;
+        end
+    endtask
+
+    task dodge_step;
+        integer j, bcx, bcy, d, best_d, best_c;
+        integer best_axis;          // 0 = dodge sideways, 1 = dodge vertically
+        reg [1:0] ty;
+        begin
+            best_d    = 100000;
+            best_axis = -1;
+            best_c    = 0;
+            // Commit to the single most urgent bullet rather than averaging
+            // the whole box - two pillars either side would cancel out and
+            // leave the soul standing between them.
+            for (j = 0; j < 8; j = j + 1) begin
+                if (bullet_active[j]) begin
+                    ty  = bullet_type[2*j +: 2];
+                    bcx = bullet_x[10*j +: 10] + ((ty == 2'd2) ? 6 : 8);
+                    bcy = bullet_y[10*j +: 10] + ((ty == 2'd2) ? 6 : 8);
+                    if (ty == 2'd1) begin
+                        // sweeping in from a side: urgency is how far it still
+                        // has to travel horizontally
+                        if (bcy > soul_y - 20 && bcy < soul_y + 36) begin
+                            d = (bcx > soul_x + 8) ? bcx - soul_x - 8
+                                                   : soul_x + 8 - bcx;
+                            if (d < best_d) begin
+                                best_d = d;  best_axis = 1;  best_c = bcy;
+                            end
+                        end
+                    end else begin
+                        // falling: urgency is how far above the soul it is
+                        if (bcx > soul_x - 20 && bcx < soul_x + 36 &&
+                            bcy < soul_y + 16) begin
+                            d = soul_y + 8 - bcy;
+                            if (d < best_d) begin
+                                best_d = d;  best_axis = 0;  best_c = bcx;
+                            end
+                        end
+                    end
+                end
+            end
+
+            release_pads;
+            if (best_axis == 0) begin
+                // step out of its column, towards whichever side has more room
+                if (best_c == soul_x + 8)
+                    pad_lf = (soul_x - SOUL_MIN_X > SOUL_MAX_X - soul_x);
+                else
+                    pad_lf = (best_c > soul_x + 8);
+                pad_rt = ~pad_lf;
+                if (soul_x <= SOUL_MIN_X + 6) begin pad_lf = 0; pad_rt = 1; end
+                if (soul_x >= SOUL_MAX_X - 6) begin pad_rt = 0; pad_lf = 1; end
+            end else if (best_axis == 1) begin
+                if (best_c == soul_y + 8)
+                    pad_up = (soul_y - SOUL_MIN_Y > SOUL_MAX_Y - soul_y);
+                else
+                    pad_up = (best_c > soul_y + 8);
+                pad_dn = ~pad_up;
+                if (soul_y <= SOUL_MIN_Y + 6) begin pad_up = 0; pad_dn = 1; end
+                if (soul_y >= SOUL_MAX_Y - 6) begin pad_dn = 0; pad_up = 1; end
+            end
+        end
+    endtask
+
+    // one frame of whatever the current player is doing
+    task play_frame;
+        begin
+            if (dodge_on && state == S_DODGE) dodge_step;
+            else                              release_pads;
+            next_frame;
+        end
+    endtask
+
     // ---- per-frame invariants ---------------------------------------------
     integer i;
-    reg [5:0] hp_prev = 6'd20;
+    reg [5:0] hp_prev = 6'd40;
     reg [5:0] dmg_want;
     integer   last_hit_frame = -1000;
     reg [9:0] bxi, byi;
@@ -200,8 +288,8 @@ module tb_battle_logic;
         #1;
         check(soul_x >= SOUL_MIN_X && soul_x <= SOUL_MAX_X, "soul_x outside the box");
         check(soul_y >= SOUL_MIN_Y && soul_y <= SOUL_MAX_Y, "soul_y outside the box");
-        check(player_hp <= 6'd20, "player_hp above maximum");
-        check(enemy_hp  <= 6'd40, "enemy_hp above maximum");
+        check(player_hp <= 6'd40, "player_hp above maximum");
+        check(enemy_hp  <= 7'd120, "enemy_hp above maximum");
         check(iframes   <= 7'd60, "iframes above maximum");
         check(cursor_x >= INNER_L && cursor_x <= INNER_R - 4, "cursor left the box");
 
@@ -241,10 +329,10 @@ module tb_battle_logic;
         begin
             g = 0;
             while (state != S_AIM && state != S_WIN && state != S_LOSE &&
-                   g < 2000) begin
-                next_frame; g = g + 1;
+                   g < 4000) begin
+                play_frame; g = g + 1;
             end
-            check(g < 2000, "never reached the aim phase");
+            check(g < 4000, "never reached the aim phase");
 
             if (state == S_AIM) begin
                 // press on the frame whose cursor position scores what we want
@@ -283,23 +371,27 @@ module tb_battle_logic;
         // ---- phase A: attract screen ---------------------------------------
         step_frames(5);
         check(state == S_TITLE, "did not power up on the title screen");
-        check(player_hp == 6'd20 && enemy_hp == 6'd40, "HP not initialised");
+        check(player_hp == 6'd40 && enemy_hp == 7'd120, "HP not initialised");
         check(bullet_active == 8'd0, "bullets live on the title screen");
 
         tap;
         check(state == S_AIM, "a button press did not start the battle");
 
-        // ---- phase B: win the battle with three bullseye strikes -----------
+        // ---- phase B: win the battle on bullseye strikes -------------------
+        // 120 enemy HP at 16 a strike is eight of them, so a won battle now
+        // runs seven enemy turns - the wave cycle gets all the way round
+        dodge_on = 1'b1;
         take_turn(1'b1, 5'd16);
-        check(enemy_hp == 6'd24, "enemy HP wrong after the first strike");
+        check(enemy_hp == 7'd104, "enemy HP wrong after the first strike");
 
         turns = 1;
-        while (state != S_WIN && state != S_LOSE && turns < 8) begin
+        while (state != S_WIN && state != S_LOSE && turns < 16) begin
             take_turn(1'b1, 5'd16);
             if (state == S_HIT) turns = turns + 1;
         end
-        check(state == S_WIN, "three bullseye strikes did not win the battle");
-        check(enemy_hp == 6'd0, "won with the enemy still holding HP");
+        dodge_on = 1'b0;
+        check(state == S_WIN, "bullseye strikes did not win the battle");
+        check(enemy_hp == 7'd0, "won with the enemy still holding HP");
         check(player_hp > 6'd0, "won at 0 HP");
         $display("  win run: %0d strikes, %0d HP left", turns, player_hp);
 
@@ -309,7 +401,7 @@ module tb_battle_logic;
         check(state == S_TITLE, "the win screen did not return to the title");
         tap;                      // attract screen -> a fresh battle
         check(state == S_AIM, "could not start a second battle");
-        check(player_hp == 6'd20 && enemy_hp == 6'd40, "restart did not reset HP");
+        check(player_hp == 6'd40 && enemy_hp == 7'd120, "restart did not reset HP");
 
         // ---- phase D: four-way movement clamps -----------------------------
         // get into a dodge phase first (movement is only live on the enemy

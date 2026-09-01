@@ -6,11 +6,11 @@
 // text.
 //
 //   y=192  enemy name / damage read-out       (14 chars)
-//   y=216  enemy HP bar (200 px = 40 HP)
+//   y=216  enemy HP bar (240 px = 120 HP)
 //   y=250  battle box frame, 260x160, 4 px white border
 //   y=288  centre message  (title / win / lose, 16 chars)
 //   y=416  phase hint      (aim / dodge, 16 chars)
-//   y=448  "HP" + player HP bar (100 px = 20 HP) + "nn / 20"
+//   y=448  "HP" + player HP bar (100 px = 40 HP) + "nn / 40"
 //
 // Text reuses project02's 8x16 ASCII font_rom unchanged: the four text bands
 // sit on disjoint scanlines, so a single font ROM port serves all of them -
@@ -34,8 +34,8 @@ module hud_renderer #(
     input  wire [2:0]  state,
     input  wire [9:0]  timer,
     input  wire        blink,       // free-running ~1 Hz, for the attract prompt
-    input  wire [5:0]  player_hp,   // 0..20
-    input  wire [5:0]  enemy_hp,    // 0..40
+    input  wire [5:0]  player_hp,   // 0..40
+    input  wire [6:0]  enemy_hp,    // 0..120
     input  wire [9:0]  cursor_x,
     input  wire [4:0]  last_damage,
     output reg  [11:0] color,       // valid 2 clocks after x/y
@@ -57,7 +57,7 @@ module hud_renderer #(
     localparam integer CENTER_X = BOX_L + BOX_W / 2;
 
     localparam integer NAME_X = 264, NAME_Y = 192, NAME_N = 14;
-    localparam integer EBAR_X = 220, EBAR_Y = 216, EBAR_W = 200, EBAR_H = 12;
+    localparam integer EBAR_X = 200, EBAR_Y = 216, EBAR_W = 240, EBAR_H = 12;
     localparam integer MSG_X  = 256, MSG_Y  = 288;
     localparam integer HINT_X = 256, HINT_Y = 416;
     localparam integer HUD_Y  = 448;
@@ -76,7 +76,9 @@ module hud_renderer #(
     localparam [11:0] C_CURSOR   = 12'hEEF;
 
     // ---- HP values as decimal digits ---------------------------------------
-    wire [3:0] hp_tens = (player_hp >= 6'd20) ? 4'd2 :
+    wire [3:0] hp_tens = (player_hp >= 6'd40) ? 4'd4 :
+                         (player_hp >= 6'd30) ? 4'd3 :
+                         (player_hp >= 6'd20) ? 4'd2 :
                          (player_hp >= 6'd10) ? 4'd1 : 4'd0;
     wire [3:0] hp_ones = player_hp - {hp_tens, 3'd0} - {1'b0, hp_tens, 1'b0};
     wire [3:0] dm_tens = (last_damage >= 5'd10) ? 4'd1 : 4'd0;
@@ -185,7 +187,7 @@ module hud_renderer #(
             4'd0: num_char = (tens == 4'd0) ? " " : ("0" + tens);
             4'd1: num_char = "0" + ones;
             4'd3: num_char = "/";
-            4'd5: num_char = "2";
+            4'd5: num_char = "4";
             4'd6: num_char = "0";
             default: num_char = " ";
         endcase
@@ -232,9 +234,10 @@ module hud_renderer #(
     wire in_box_inner = (x >= INNER_L) && (x <= INNER_R) &&
                         (y >= INNER_T) && (y <= INNER_B);
 
-    // HP bars: one bar pixel column per HP is 5 px wide on both bars
-    wire [9:0] hp_fill = {2'd0, player_hp, 2'd0} + {4'd0, player_hp};
-    wire [9:0] en_fill = {2'd0, enemy_hp,  2'd0} + {4'd0, enemy_hp};
+    // HP bars: 2.5 px of bar per player HP (100 px = 40), 2 px per enemy HP
+    // (240 px = 120). The half pixel is a shift, and rounds invisibly.
+    wire [9:0] hp_fill = {3'd0, player_hp, 1'b0} + {5'd0, player_hp[5:1]};
+    wire [9:0] en_fill = {2'd0, enemy_hp,  1'b0};   // 2 px per HP, 240 px full
     wire in_hpbar = (x >= HPBAR_X) && (x < HPBAR_X + HPBAR_W) &&
                     (y >= HPBAR_Y) && (y < HPBAR_Y + HPBAR_H);
     wire in_enbar = (x >= EBAR_X) && (x < EBAR_X + EBAR_W) &&

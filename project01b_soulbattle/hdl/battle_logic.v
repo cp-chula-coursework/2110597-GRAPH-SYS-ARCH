@@ -63,8 +63,8 @@ module battle_logic #(
     output reg  [7:0]  anim       = 8'd0,   // free-running, drives the idle bob
     output reg  [9:0]  soul_x     = 10'd0,
     output reg  [9:0]  soul_y     = 10'd0,
-    output reg  [5:0]  player_hp  = 6'd20,
-    output reg  [5:0]  enemy_hp   = 6'd40,
+    output reg  [5:0]  player_hp  = 6'd40,
+    output reg  [6:0]  enemy_hp   = 7'd120,
     output reg  [6:0]  iframes    = 7'd0,   // mercy invincibility, frames
     output reg  [9:0]  cursor_x   = 10'd0,  // attack cursor, left edge
     output reg  [4:0]  last_damage= 5'd0,
@@ -111,8 +111,8 @@ module battle_logic #(
     localparam integer DESPAWN_B = BOX_T + BOX_H + 56;
 
     // ---- tuning ------------------------------------------------------------
-    localparam [5:0] PLAYER_HP_MAX = 6'd20;
-    localparam [5:0] ENEMY_HP_MAX  = 6'd40;
+    localparam [5:0] PLAYER_HP_MAX = 6'd40;
+    localparam [6:0] ENEMY_HP_MAX  = 7'd120;
     localparam [5:0] HIT_DMG       = 6'd2;    // HP lost per bullet contact
     localparam [5:0] BLAST_DMG     = 6'd3;    // ... and per blaster beam
     localparam [6:0] IFRAMES       = 7'd60;   // 1 s of mercy invincibility
@@ -232,9 +232,13 @@ module battle_logic #(
     reg [7:0] spawn_t = 8'd0;
     wire [7:0] base_period  = (wave == 2'd0) ? 8'd26 :
                               (wave == 2'd1) ? 8'd30 : 8'd22;
-    wire [7:0] round_x3     = {4'd0, round_cnt, 1'b0} + {5'd0, round_cnt};
-    wire [7:0] spawn_period = (base_period > round_x3 + 8'd8)
-                                ? base_period - round_x3 : 8'd8;
+    // 2 frames faster per turn. The enemy has 120 HP, i.e. seven turns even
+    // for a player hitting bullseyes, so the ramp has to be gentle enough to
+    // still be survivable at the end of one - a steeper one fills the box
+    // long before the enemy runs out of HP.
+    wire [7:0] round_ramp   = {4'd0, round_cnt, 1'b0};
+    wire [7:0] spawn_period = (base_period > round_ramp + 8'd8)
+                                ? base_period - round_ramp : 8'd8;
 
     // ---- per-frame update --------------------------------------------------
     integer i;
@@ -288,8 +292,8 @@ module battle_logic #(
 
                 if (press) begin
                     last_damage <= aim_damage;
-                    enemy_hp    <= (enemy_hp > {1'b0, aim_damage})
-                                     ? enemy_hp - {1'b0, aim_damage} : 6'd0;
+                    enemy_hp    <= (enemy_hp > {2'b0, aim_damage})
+                                     ? enemy_hp - {2'b0, aim_damage} : 7'd0;
                     hit_flash   <= 8'd45;
                     state       <= S_HIT;
                     timer       <= 10'd0;
@@ -299,7 +303,7 @@ module battle_logic #(
             // ---- damage read-out, then hand the turn to the enemy ---------
             S_HIT: if (timer >= HIT_FRAMES) begin
                 timer <= 10'd0;
-                if (enemy_hp == 6'd0)
+                if (enemy_hp == 7'd0)
                     state <= S_WIN;
                 else begin
                     state   <= S_DODGE;

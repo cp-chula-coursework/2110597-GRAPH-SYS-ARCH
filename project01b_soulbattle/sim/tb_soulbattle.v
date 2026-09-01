@@ -57,7 +57,7 @@ module tb_soulbattle;
     wire       frame_start = dut.frame_start;
     wire [2:0] state       = dut.state;
     wire [5:0] player_hp   = dut.player_hp;
-    wire [5:0] enemy_hp    = dut.enemy_hp;
+    wire [6:0] enemy_hp    = dut.enemy_hp;
     wire [4:0] last_damage = dut.last_damage;
     wire [1:0] wave        = dut.wave;
     wire       blast_busy  = dut.blast_busy;
@@ -146,7 +146,7 @@ module tb_soulbattle;
         // ---- attract screen ------------------------------------------------
         step_frames(4);
         check(state == S_TITLE, "did not power up on the title screen");
-        check(player_hp == 6'd20 && enemy_hp == 6'd40, "HP not initialised");
+        check(player_hp == 6'd40 && enemy_hp == 7'd120, "HP not initialised");
         // the prompt blinks on anim[5]: dump a frame where it is lit
         guard = 0;
         while (!dut.anim[5] && guard < 64) begin step_frames(1); guard = guard + 1; end
@@ -162,7 +162,7 @@ module tb_soulbattle;
         press;
         check(state == S_HIT, "the strike did not land");
         check(last_damage != 5'd0, "the strike scored no damage");
-        check(enemy_hp < 6'd40, "the enemy took no damage");
+        check(enemy_hp < 7'd120, "the enemy took no damage");
         step_frames(6);
         dump_frame("soulbattle_hit.ppm");
 
