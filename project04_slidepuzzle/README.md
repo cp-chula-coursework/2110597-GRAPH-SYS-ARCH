@@ -19,11 +19,9 @@ The same game core runs on two targets:
 > - **Simulation:** verified for the core, the playground top, and the
 >   AX7010 top's button path.
 > - **Vivado:** builds clean through bitstream.
-> - **Playground compile:** never run. Verilator wasn't available locally, so
->   `src/` has only been written to the playground's known limits:
->   - signals of 32 bits or less;
->   - nothing signed;
->   - no array writes inside `for` loops.
+> - **Playground compile:** linted locally with Verilator 5.054 and the
+>   playground's own flags: no errors. That local run reproduced, word for
+>   word, the one error the live playground reported on the first push.
 >
 > Not done yet: loading it live in the VGA Playground (the branch has to be
 > pushed first, see below), bring-up on the board, the video and the written
@@ -158,8 +156,13 @@ These are all per-pixel tests in stage 0, applied in stage 3:
     from bits, `{x0^y0, y0, x1^y1, y1}`, with no table:
     `level = (3c + threshold) >> 8`.
 
-Nothing in `src/` is wider than 32 bits or signed, because the playground's
-simulator does not handle either.
+`src/` keeps to a few rules for the playground:
+
+- Nothing is wider than 32 bits or signed, because its simulator handles
+  neither.
+- No array is written inside a `for` loop, because Verilator rejects that.
+- No comment line starts with the word "verilator", because Verilator
+  reads such comments as directives and stops on one it doesn't know.
 
 ## Layout, and why it differs from the other projects
 
@@ -264,6 +267,15 @@ vvp /tmp/tb_tt.vvp && python3 ../sim/check_tt.py
 iverilog -P tb_puzzle.SHUF=200 -P tb_puzzle.REPLAY=0 -o /tmp/tb_soak.vvp \
          ../sim/tb_puzzle.v puzzle_core.v vga_timing.v
 vvp /tmp/tb_soak.vvp
+
+# the playground's compile, with its own Verilator flags (warnings are fine;
+# only %Error lines stop the playground)
+cd ..
+verilator --cc -O3 -Wall -Wno-EOFNEWLINE -Wno-DECLFILENAME --x-assign fast \
+          --debug-check -Isrc/ --top-module tt_um_hextex_slidepuzzle -Wno-fatal \
+          --Mdir /tmp/vl src/tt_um_hextex_slidepuzzle.v src/puzzle_core.v \
+          src/vga_timing.v src/gamepad_pmod_rx.v
+cd src
 
 # the AX7010 top's buttons (Clocking Wizard and hdmi_tx stubbed in the bench)
 iverilog -o /tmp/tb_top.vvp ../sim/tb_top.v ../hdl/top.v ../hdl/pad_input.v \

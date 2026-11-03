@@ -198,8 +198,10 @@ module puzzle_core #(
     wire load_solved   = rst || begin_shuffle;
 
     // ---- the board, and its only three writers
-    // Kept in its own block, written out entry by entry: the VGA Playground's
-    // Verilator rejects non-blocking writes to an array inside a for loop.
+    // Kept in its own block, written out entry by entry, because the VGA
+    // Playground's compiler rejects non-blocking writes to an array inside a
+    // for loop. (A comment line must never start with the compiler's own
+    // name: it reads those as directives, and stops on one it doesn't know.)
     always @(posedge clk) begin
         if (load_solved) begin
             board[0]  <= 4'd0;   board[1]  <= 4'd1;
