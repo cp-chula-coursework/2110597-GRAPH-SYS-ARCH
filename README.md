@@ -28,9 +28,9 @@ substitute an HDMI/TMDS output stage built from scratch instead.
 Each subfolder is a self-contained Vivado project (own `hdl/`,
 `constraints/`, `scripts/create_project.tcl`, and `README.md`). Non-graded
 exploratory work lives in plainly-named folders (e.g. `demo_test_pattern/`);
-graded assignments follow a `projectNN_<name>` convention, and a second,
+graded assignments follow a `projectNN_<name>` convention, and a further,
 independent take on the same assignment gets a letter suffix
-(`projectNNb_<name>`).
+(`projectNNb_<name>`, `projectNNc_<name>`).
 
 ### `demo_test_pattern/` - HDMI bring-up demo
 
@@ -129,6 +129,38 @@ timing and dumps rendered frames of each screen, and one measures the
 pitches coming off the buzzer pin against the score. See
 [`project01b_soulbattle/README.md`](project01b_soulbattle/README.md) for
 controls, architecture, and build steps.
+
+### `project01c_soulbattle/` - 1st-generation console: Soul Battle, pure logic
+
+The same battle as `project01b`, rebuilt with **no stored art anywhere**: no
+sprite ROM, no character generator, no generated bitmaps. Every pixel on
+screen comes from arithmetic on the beam position, which is the only kind of
+graphics 1st generation hardware could do - Pong's ball, paddles and net are
+comparator outputs, and its score came out of a small diode ROM that could
+make digits and nothing else.
+
+- **The soul** is two diamonds and a triangle; the notch at the top of the
+  heart is where the diamonds meet, not something drawn.
+- **The enemy** is a hexagon whose half-width is a straight line in y, plus
+  horns that taper to a point, eyes cut by diagonal half-planes, and teeth
+  that are one bit of x.
+- **The blaster skulls** are a shape function evaluated in the beam's own
+  rotated frame, so all eight headings come out of one description - where
+  the ROM version needed two stored frames plus mirror-and-swap address
+  tricks. Getting that right meant giving the skull a true along-beam axis
+  (the beam's own is a component, which shears the shape) and correcting the
+  sqrt(2) of the diagonal frame with shifts.
+- **The HUD** says what the game wants with shapes instead of sentences: a
+  blinking bar to start, a chevron for your turn, hazard stripes for the
+  enemy's, a tick or a cross at the end. Only the numbers use a font -
+  project01's own 5x7 `digit_font`, unchanged - and binary to decimal is four
+  conditional subtractions.
+
+Not a multiplier or a divider anywhere in the design: every slope, taper and
+scale is a shift and an add. Same game logic and same testbenches as
+`project01b`, all still passing. See
+[`project01c_soulbattle/README.md`](project01c_soulbattle/README.md) for the
+shape-by-shape walkthrough, controls, and build steps.
 
 ### `project02_textmode/` - Text mode display
 
