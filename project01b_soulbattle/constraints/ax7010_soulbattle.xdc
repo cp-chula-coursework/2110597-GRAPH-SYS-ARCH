@@ -167,3 +167,46 @@ set_property PULLUP true [get_ports {ext_key[4]}]
 set_property PACKAGE_PIN Y16 [get_ports {uart_rx_pin}]
 set_property IOSTANDARD LVCMOS33 [get_ports {uart_rx_pin}]
 set_property PULLUP true [get_ports {uart_rx_pin}]
+
+## Passive buzzer, on the next free pair of pins of J10 - the header that
+## already carries the external buttons and the adapter's TXD, so everything
+## that is not video leaves the board from one place. The two pins are
+## adjacent, so the buzzer plugs straight across them.
+##
+##   buzzer leg   goes to     J10 pin   net       package pin
+##   ----------   ---------   -------   -------   -----------
+##   +            buzzer       9        IO1_4N    W15
+##   -            buzzer_n    10        IO1_4P    V15
+##
+## The two pins carry the same square wave in antiphase, so the element sees
+## 6.6 V peak-to-peak instead of the 3.3 V it would get against ground -
+## about 6 dB, for free. Wiring `-` to the header's GND (pin 1) instead still
+## works and is simply the quieter half of this.
+##
+## A *passive* buzzer is wanted here (two legs, no oscillator inside it -
+## it is a tiny speaker and it plays whatever frequency it is fed). An
+## active one would sound its own single note no matter what this drives
+## into it, so no tune would come out.
+##
+## Driving it: the header already has 33R in series with every IO (resistor
+## network RN2..RN9 in the ALINX schematic), which together with the pin's
+## own drive keeps a piezo element safely within what the IO can source - a
+## piezo is a capacitor and draws almost nothing.
+##
+## A *magnetic* buzzer is a coil of a few tens of ohms and asks for far more
+## than a pin can give, which is what makes one sound feeble wired directly.
+## Tell the two apart with a multimeter across the legs: a coil reads 16-42
+## ohms, a piezo reads open. Run a magnetic one through a small NPN
+## transistor instead - base to `buzzer` (W15) through 1k, emitter to GND,
+## buzzer between the collector and the header's 5V on pin 2, and a 1N4148
+## across the buzzer with its cathode to the 5V - and leave `buzzer_n`
+## unconnected, since a transistor stage is single-ended.
+set_property PACKAGE_PIN W15 [get_ports {buzzer}]
+set_property IOSTANDARD LVCMOS33 [get_ports {buzzer}]
+set_property SLEW SLOW [get_ports {buzzer}]
+set_property DRIVE 12 [get_ports {buzzer}]
+
+set_property PACKAGE_PIN V15 [get_ports {buzzer_n}]
+set_property IOSTANDARD LVCMOS33 [get_ports {buzzer_n}]
+set_property SLEW SLOW [get_ports {buzzer_n}]
+set_property DRIVE 12 [get_ports {buzzer_n}]

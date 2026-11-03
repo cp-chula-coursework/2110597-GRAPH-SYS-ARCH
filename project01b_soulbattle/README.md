@@ -13,7 +13,9 @@ HP bar drains, and striking back with a timed-hit attack between waves. The
 enemy cycles through four attacks, the last of which sends **blasters** -
 skulls that appear on the rim of the box, turn to face your soul, give you a
 moment's warning, and fire a beam straight down the line they are aiming
-along.
+along. A passive buzzer on the expansion header plays MEGALOVANIA's riff
+underneath all of it, generated the same way everything else here is: by
+counters, with no CPU and no sample memory.
 
 ```
                     +----------------+
@@ -75,6 +77,15 @@ screen instead.
 | key[1] | N16 | Move down  / confirm                              |
 | key[2] | T17 | Move left  / confirm                              |
 | key[3] | R17 | Move right / confirm                              |
+
+Two of them held together are chords rather than moves, since the soul cannot
+travel two ways at once:
+
+| Chord                | Held for | Does                                   |
+|----------------------|----------|----------------------------------------|
+| key[0] + key[1] (up + down)          | 0.75 s | Mute / unmute the buzzer |
+| key[0] + key[1] + key[2] (+ left)    | 0.75 s | Step the buzzer bring-up mode (see Sound) |
+| key[2] + key[3] (left + right)       | 0.75 s | Step the serial adapter's baud rate |
 
 The four board LEDs (M14, M15, K16, J16) show the player's HP a quarter at a
 time, so the board itself shows how the battle is going. On the attract
@@ -369,6 +380,8 @@ available; it uses one), so the renderers never see state change mid-frame.
   battle_logic ----- soul_x/soul_y, state, wave ----> blaster_logic
        ^                                                   |
        +--------- blast_hit, blast_busy -------------------+
+
+  battle_logic --- state ---> buzzer_music (song_rom) ---> buzzer pin
 ```
 
 | File | Role |
@@ -388,6 +401,8 @@ available; it uses one), so the renderers never see state change mid-frame.
 | `ps2_pad.v` | PlayStation controller host: SPI mode 3, LSB first, one poll per frame (see the status note under Controls) |
 | `uart_rx.v` | 8N1 serial receiver, baud selectable on the board |
 | `serial_pad.v` | serial adapter bytes -> held button levels |
+| `buzzer_music.v` | square-wave tone generator + note sequencer for a passive buzzer |
+| `song_rom.v` | MEGALOVANIA's riff as notes and lengths (`scripts/gen_song.py`) |
 | `vga_timing.v`, `hdmi_tx.v`, `tmds_encoder.v`, `oserdes_tmds.v` | unchanged from project01 |
 
 Notes on the design decisions a hardwired console forces:
@@ -431,6 +446,12 @@ Notes on the design decisions a hardwired console forces:
 - **The blasters composite above the HUD** on purpose: a skull that comes in
   over the top edge passes in front of the enemy's name and HP bar for the
   second it is on screen.
+- **Music is three nested counters.** No sample memory, no DAC, no timer
+  interrupt - because there is nothing to interrupt. One counter measures a
+  sixteenth-note, one counts the sixteenths left in the note being held, and
+  one counts a half-period of the pitch and flips the pin. The score sits in
+  a 80-entry LUT ROM alongside them. It is the same shape as the rest of the
+  design: state that only ever moves forward on a clock edge.
 - **The controller is polled in vertical blanking**, on the same `frame_start`
   tick the game logic runs on. A whole transaction is about 12,600 pixel
   clocks against the 420,000 in a frame, so it is finished long before the
@@ -438,6 +459,209 @@ Notes on the design decisions a hardwired console forces:
   controller's own reply decides how long the transaction is: the low nibble
   of its ID byte is the number of 16-bit words it is about to send, so a
   digital pad takes 5 bytes and an analog one 9, with nothing hardwired.
+
+## Sound
+
+A **passive** buzzer on the expansion header plays MEGALOVANIA's opening riff
+on a loop, from the attract screen through the whole battle.
+
+Passive is the important word. A passive buzzer is a tiny speaker with two
+legs and nothing inside it: it sounds whatever frequency is driven into it,
+which is what makes a tune possible. An active buzzer has its own oscillator
+and would sound its own single note no matter what this design did to the
+pin.
+
+### Wiring it
+
+The design brings the square wave out on **two** pins in antiphase, so a
+buzzer wired across the pair sees 6.6 V peak-to-peak instead of the 3.3 V it
+would get against ground - 6 dB for the cost of moving one wire off the
+ground pin.
+
+| Buzzer leg | Goes to    | J10 pin | Net      | Package pin |
+|------------|------------|---------|----------|-------------|
+| `+`        | `buzzer`   | 9       | `IO1_4N` | W15         |
+| `-`        | `buzzer_n` | 10      | `IO1_4P` | V15         |
+
+The two pins are adjacent, so the buzzer plugs straight across them. Wiring
+`-` to the header's GND (pin 1) instead still works and is simply the
+quieter half of this. J10 is the same header the external buttons and the
+serial adapter use, and it numbers from the **bottom** - pin 1 is the square
+pad.
+
+### If it makes no sound at all
+
+Work down this list before changing anything - most of it takes seconds and
+needs no soldering.
+
+1. **Did you rebuild the bitstream?** `buzzer_n` on V15 did not exist in
+   earlier builds. If the buzzer's second leg has been moved from GND (pin 1)
+   to pin 10 while the board is still running an older bitstream, that pin is
+   not driven at all and the result is silence rather than a quieter noise.
+   This is the most common way to go from "quiet" to "nothing".
+2. **Put the board in bring-up mode.** Hold **up + down + left for 0.75 s**
+   to step the buzzer through four modes; the LEDs say which one is running:
+
+   | LED    | Mode | What comes out                                       |
+   |--------|------|------------------------------------------------------|
+   | none   | 0    | the tune, normally                                    |
+   | led[1] | 1    | a flat 2.4 kHz square - a magnetic buzzer's resonance |
+   | led[2] | 2    | a flat 4 kHz square - a piezo disc's resonance        |
+   | led[3] | 3    | `buzzer` high, `buzzer_n` low, DC, no tone            |
+
+   Modes 1 and 2 sound whether or not the music is muted, and are the loudest
+   noise these pins can make. If neither is audible, the problem is not the
+   score, the tempo or the mute chord - stop looking there.
+3. **Measure mode 3.** A meter across J10 pins 9 and 10 should read the full
+   3.3 V, steady. That proves the pins, the constraints, the bitstream and
+   the wiring in one measurement, with no timing in the way. If it reads 0,
+   the bitstream or the wiring is wrong; if it reads 3.3 V and the buzzer is
+   still silent, the fault is in the element or its drive, not the FPGA.
+4. **Is it an *active* buzzer?** That is the one part that can never play a
+   tune - it has its own oscillator and sounds its own single note. Mode 3
+   identifies it: an active buzzer beeps on DC, a passive one clicks once and
+   goes quiet. A meter across the legs is the other tell - a passive magnetic
+   buzzer reads 16-42 ohms, a piezo reads open, an active one reads a few
+   hundred ohms and is usually marked for polarity. Anything sold for
+   Arduino kits comes in both kinds and they look identical.
+5. **Check the transistor's pinout** if you have built the driver below.
+   2N3904, S8050 and PN2222 are **E-B-C** left to right with the flat face
+   towards you; **BC337 is C-B-E**, the other way round. Getting it backwards
+   is the usual reason a driver stage does nothing.
+6. **Check the diode's direction.** The banded end goes to +5 V. Backwards,
+   it clamps the collector near the supply and almost nothing reaches the
+   coil.
+7. **Is the 5 V rail there?** J10 pin 2 against pin 1 should read ~5 V. It
+   comes from the board's own supply, so a board running on JTAG-USB alone
+   may not have it.
+
+Do not leave mode 3 running: it is a steady current through a magnetic
+buzzer's coil, which only heats it.
+
+### If it is quiet rather than silent
+
+That depends on which kind of element it is, and a multimeter across the two
+legs settles it in five seconds: **16-42 ohms is a magnetic buzzer** (a
+coil), **open circuit is a piezo** (a capacitor). Anything sold as a "5V
+buzzer" is almost always the magnetic kind.
+
+**A magnetic buzzer wired straight to the pins will always be feeble**, and
+no amount of RTL fixes it. Every header IO has 33R in series (resistor
+networks RN2..RN9 in the ALINX schematic), and the pin's own output adds
+another 40-50R, so a 16R coil ends up with a few tenths of a volt across it
+out of the 3.3 available - almost all of the drive is burnt in resistance
+before it reaches the coil. Give it its own supply through a transistor
+instead. J10 pin 2 is the board's 5V rail, which is what a 5V buzzer wants:
+
+```
+                                +5V  (J10 pin 2)
+                                 |
+                          +------+------+
+                          |             |
+                        buzzer      1N4148  (cathode to +5V:
+                          |             |    catches the coil's
+                          +------+------+     kick when it turns off)
+                                 |
+   buzzer (W15) ---[ 1k ]--- base|  2N3904 / S8050 / BC337
+                                 |\
+                                 | >  collector above, emitter below
+                                 |/
+                                 |
+                                GND  (J10 pin 1)
+```
+
+Leave `buzzer_n` (V15) unconnected - a transistor stage is single-ended, and
+the whole 5 V now lands on the coil rather than a fraction of 3.3 V. 1k on
+the base gives about 2.6 mA of base current, which is ten times what a 30 mA
+buzzer needs.
+
+**A piezo** is a capacitor and draws almost nothing, so the pins drive it
+happily and the antiphase pair is already most of what can be done. If it is
+still too quiet, the reason is resonance: a piezo disc is many times louder
+near its own resonance, up around 2-4 kHz, and MEGALOVANIA's riff sits at
+116-587 Hz. `buzzer_music`'s `OCTAVE_UP` parameter (in
+[`battle_core.v`](hdl/battle_core.v), 0 by default) transposes the whole tune
+up by that many octaves - try 2 or 3. It buys loudness with the bass of the
+riff, which is most of its character, so it is a last resort rather than a
+default.
+
+### How the note comes out
+
+```
+  song_rom ---> sequencer -----> divider ------> square wave --+-> buzzer
+  what to       how long to      how fast to                   |
+  play next     hold it          toggle                        +-> buzzer_n
+                                                                   (inverted)
+```
+
+Three counters, nested, in [`hdl/buzzer_music.v`](hdl/buzzer_music.v):
+
+- `tick_cnt` counts one sixteenth-note. At 120 BPM - MEGALOVANIA's tempo -
+  that is `25_175_000 * 15 / 120` = 3,146,875 pixel clocks.
+- `left` counts the sixteenths still to hold in the current note, loaded from
+  the score. When it runs out the address steps, and at the end of the score
+  it wraps back to the top.
+- `tone_cnt` counts one half-period of the pitch and flips the two pins.
+
+The pitch table is one octave long, not eight. Only the twelve semitones of
+octave 5 are stored, to the nearest whole hertz; every lower octave is a
+right shift of those, because dropping an octave is exactly doubling the
+period. The shift is not an approximation at all, and rounding 523.25 Hz to
+523 is a 1.6 cent error - about a hundredth of a semitone.
+
+The tone is cut 20 ms before the end of every note. Without that the riff's
+repeated notes (`D D`, `C C`, ...) would run together into one long note and
+the rhythm would go.
+
+Both pins rest **low together** whenever nothing is sounding - between
+notes, on the win and lose screens, and while muted. That is the only resting
+state that does not leave a DC voltage sitting across the element, which
+would be silent but would warm a magnetic buzzer's coil for nothing.
+
+**Up + down held for 0.75 s mutes it**, and mutes it until the chord is
+pressed again - a lab bench can be left quiet. The music also stops on the
+win and game-over screens, and because stopping rewinds the score, every
+battle starts from the first bar of the riff rather than wherever the last
+one left off.
+
+### The score
+
+[`scripts/gen_song.py`](scripts/gen_song.py) writes `hdl/song_rom.v` from a
+readable score, the way `gen_assets.py` writes the sprite ROMs. What is in
+there is the riff everyone knows: four bars in the bass, then the same four
+an octave up, which is where the lead comes in in the original. Each bar is
+sixteen sixteenth-notes:
+
+```
+     root root  D   A    G#   G    F    D  F  G       <- pitches
+      1    1    2   3    2    2    2    1  1  1       <- sixteenths (= 16)
+```
+
+Only the first two notes move from bar to bar - the root walks down
+D, C, B, Bb under a fixed upper line, which is what makes the riff sound like
+it is descending while the top of it stays put. Eight bars at 120 BPM is a
+16-second loop.
+
+The roots of the low half are **D3, C3, B2, Bb2** - note the octave. Octave
+numbers roll over at C rather than at A, so once the walk drops below C it is
+in the octave below the rest of the bar. Writing them all as octave 3 sends
+bars 3 and 4 up a seventh instead of down a tone, which sounds nothing like
+the riff; that was a real bug here, and `sim/tb_music.v` now fails on it.
+
+To change or extend the tune, edit `SCORE` in `gen_song.py` and rerun it:
+
+```sh
+python3 scripts/gen_song.py                       # rewrites hdl/song_rom.v
+python3 scripts/gen_song.py --wav /tmp/riff.wav   # + hear it first
+```
+
+The `--wav` preview renders the score as a square wave at the frequencies the
+divider *actually* produces - the rounded ones, after the octave shift - and
+cuts each note the same 20 ms early, so what comes out of the speaker is what
+will come out of the buzzer. Worth a listen before spending a synthesis run.
+
+The player handles octaves 2 to 5 and rests, and the generator checks that
+every bar still comes to sixteen sixteenths before it writes anything out.
 
 ## Art
 
@@ -514,6 +738,25 @@ Before targeting hardware:
   each skull should point down its own beam. The blaster wave is four enemy
   turns into a battle, which is thousands of frames at real timing, so this
   is how that picture gets checked without running the whole core that long.
+- `sim/tb_music.v` checks the buzzer against the score rather than against
+  itself: it adds up every bar of `song_rom.v` and fails if one is not
+  sixteen sixteenths long, checks that the four roots of each half walk
+  *down* and that the second half is the first exactly one octave up (the
+  bug that check exists for is below), then measures the pitches off the
+  buzzer pin - not out of the ROM - and checks that the first note is D3,
+  that the fourth is A3, and that bar 5 opens on a D4 whose period is exactly
+  half the opening D3's, so the octave shift in the second half of the riff
+  really is an octave. It watches the two output pins over every note played
+  and fails if they are ever high together or ever stop being exact opposites
+  mid-note, and it checks that `enable` low takes *both* of them low - one
+  left high would sit DC across the buzzer - and rewinds the score. The three
+  bring-up modes are checked the same way, off the pins: mode 1 must be a
+  flat 2.4 kHz, mode 2 a flat 4 kHz, and mode 3 must split the pins and hold
+  them there, all of it while the music is muted, since a board that needs
+  bring-up is usually a board making no sound. The player is instantiated at a hundredth of the pixel clock so that
+  a whole loop of the song is a few million simulation clocks rather than a
+  few hundred million; every ratio in the design survives that, so a measured
+  half-period times 100 is what the hardware will produce.
 - The full `top.v` hierarchy elaborates cleanly under `iverilog` (the only
   errors are for Xilinx's `OSERDESE2`/`OBUFDS` primitives and the
   Vivado-generated `clk_wiz_video` IP, neither of which exist outside
@@ -530,6 +773,9 @@ vvp /tmp/tb_ps2.vvp
 iverilog -o /tmp/tb_blaster.vvp hdl/blaster_logic.v sim/tb_blaster.v
 vvp /tmp/tb_blaster.vvp
 
+iverilog -o /tmp/tb_music.vvp hdl/song_rom.v hdl/buzzer_music.v sim/tb_music.v
+vvp /tmp/tb_music.vvp
+
 iverilog -o /tmp/tb_bd.vvp hdl/vga_timing.v hdl/blaster_rom.v \
   hdl/blaster_renderer.v sim/tb_blaster_draw.v
 vvp /tmp/tb_bd.vvp     # writes soulbattle_blaster.ppm
@@ -538,6 +784,7 @@ iverilog -o /tmp/tb_sb.vvp hdl/vga_timing.v hdl/pad_input.v hdl/soul_rom.v \
   hdl/monster_rom.v hdl/blaster_rom.v hdl/font_rom.v hdl/soul_renderer.v \
   hdl/monster_renderer.v hdl/bullet_renderer.v hdl/blaster_renderer.v \
   hdl/hud_renderer.v hdl/battle_logic.v hdl/blaster_logic.v hdl/ps2_pad.v \
+  hdl/uart_rx.v hdl/serial_pad.v hdl/song_rom.v hdl/buzzer_music.v \
   hdl/battle_core.v sim/tb_soulbattle.v
 vvp /tmp/tb_sb.vvp     # slow: real frames, writes soulbattle_*.ppm
 ```

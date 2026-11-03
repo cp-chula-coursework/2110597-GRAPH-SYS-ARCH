@@ -32,6 +32,13 @@
 // A PlayStation controller can be plugged into the expansion header as well.
 // It is polled once per frame by ps2_pad and simply ORed in with the board's
 // buttons, so either input plays the game and neither has to be there.
+//
+// Sound rides alongside all of that and shares nothing with it: buzzer_music
+// walks its own score at its own tempo off the same pixel clock, and the game
+// only tells it whether a battle is on. Holding up and down together for
+// three quarters of a second mutes it. It leaves on two pins driven in
+// antiphase, so the buzzer goes across the pair and sees twice the swing it
+// would against ground.
 //------------------------------------------------------------------------------
 module battle_core (
     input  wire       clk,          // 25.175 MHz pixel clock
@@ -43,6 +50,9 @@ module battle_core (
     output wire       ps2_clk,
     output wire       ps2_cmd,
     output wire [3:0] led,        // active-low controller diagnostics
+    output wire       buzzer,     // passive buzzer: MEGALOVANIA, see buzzer_music
+    output wire       buzzer_n,   // the same square wave inverted - wire the
+                                  // buzzer across the pair rather than to GND
     output wire [7:0] vid_r,
     output wire [7:0] vid_g,
     output wire [7:0] vid_b,
@@ -162,11 +172,14 @@ module battle_core (
     // would say nothing, they echo the four external direction buttons
     // instead - which is all the bring-up an external pad needs: press one,
     // watch its lamp.
-    assign led = (state == S_TITLE) ? ~ext[3:0]
-                                    : ~{player_hp > 6'd30,
-                                        player_hp > 6'd20,
-                                        player_hp > 6'd10,
-                                        player_hp > 6'd0};
+    // A buzzer bring-up mode takes the LEDs over while it runs - see the
+    // buzzer section below for the ladder.
+    assign led = (buzz_test != 2'd0) ? ~(4'b0001 << buzz_test)
+               : (state == S_TITLE)  ? ~ext[3:0]
+                                     : ~{player_hp > 6'd30,
+                                         player_hp > 6'd20,
+                                         player_hp > 6'd10,
+                                         player_hp > 6'd0};
 
     // either input device drives the game; the d-pad and the buttons are the
     // same four signals as far as everything downstream is concerned
@@ -275,6 +288,67 @@ module battle_core (
         .right       (ser_rt),
         .ok          (ser_ok),
         .last        (ser_last)
+    );
+
+    // ---- the buzzer --------------------------------------------------------
+    // MEGALOVANIA's riff, on a passive buzzer wired to the expansion header.
+    // It plays through the attract screen and the whole battle and stops on
+    // the win and lose screens - and because `enable` low also rewinds the
+    // score, every battle starts on the first bar of the riff rather than
+    // wherever the last one happened to leave off.
+    //
+    // Up and down together, held, mutes it. That is not a move the game can
+    // use (the soul cannot go two ways at once), and holding it for
+    // CHORD_HOLD frames means a scramble mid-dodge cannot trip it by
+    // accident. There is deliberately no reset for the mute other than
+    // pressing the chord again, so a lab bench can be left quiet.
+    //
+    // Adding left to that chord steps the buzzer's bring-up mode instead, so
+    // the mute chord has to exclude left to keep the two apart. The bring-up
+    // modes are what to reach for when the buzzer makes no sound at all -
+    // they replace the tune with a flat tone at the resonance of each kind of
+    // element, and then with plain DC to put a meter on. The four board LEDs
+    // say which mode is running, since a mode that is not producing sound is
+    // otherwise indistinguishable from one that is:
+    //
+    //   led[1]  2.4 kHz flat tone   what a magnetic buzzer is loudest at
+    //   led[2]  4 kHz flat tone     what a piezo disc is loudest at
+    //   led[3]  DC, no tone         measure it, and identify an active buzzer
+    //
+    // led[0] never lights in a test mode, so "some LED on, led[0] off" reads
+    // as "this board is not playing the game's music right now".
+    reg music_mute = 1'b0;
+    reg [5:0] mute_hold = 6'd0;
+    wire chord_mute = pad[0] & pad[1] & ~pad[2];
+
+    reg [1:0] buzz_test = 2'd0;
+    reg [5:0] test_hold = 6'd0;
+    wire chord_test = pad[0] & pad[1] & pad[2];
+
+    always @(posedge clk) if (frame_start) begin
+        if (!chord_mute)              mute_hold <= 6'd0;
+        else if (mute_hold != 6'd63)  mute_hold <= mute_hold + 6'd1;
+        if (chord_mute && mute_hold == CHORD_HOLD)
+            music_mute <= ~music_mute;
+
+        if (!chord_test)              test_hold <= 6'd0;
+        else if (test_hold != 6'd63)  test_hold <= test_hold + 6'd1;
+        if (chord_test && test_hold == CHORD_HOLD)
+            buzz_test <= buzz_test + 2'd1;   // 0 -> 1 -> 2 -> 3 -> 0
+    end
+
+    wire music_on = !music_mute && (state != S_WIN) && (state != S_LOSE);
+
+    buzzer_music #(
+        .CLK_HZ    (25_175_000),  // the pixel clock, which is the only clock here
+        .BPM       (120),
+        .OCTAVE_UP (0)            // raise only if a piezo is still too quiet
+    ) u_music (
+        .clk      (clk),
+        .enable   (music_on),
+        .test     (buzz_test),
+        .buzzer   (buzzer),
+        .buzzer_n (buzzer_n)
     );
 
     // ---- game state (updated during vblank only) ---------------------------

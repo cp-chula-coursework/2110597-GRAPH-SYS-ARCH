@@ -12,6 +12,7 @@
 // sys_clk       : 50 MHz onboard oscillator (pin U18)
 // clk_wiz_video : 50 MHz -> 25.175 MHz pixel clock + 125.875 MHz (5x) serial clock
 // battle_core   : timing + sprite/bullet/HUD renderers + game logic + compositor
+//                 + buzzer_music, the square-wave MEGALOVANIA player
 // hdmi_tx       : RGB -> TMDS encode + OSERDES serialize (pure Verilog)
 //
 // The board's 4 push buttons (key[0..3]) are active-low; battle_core
@@ -29,6 +30,8 @@ module top(
     output wire ps2_clk,
     output wire ps2_cmd,
     output wire [3:0] led,         // active-low player HP meter, see battle_core
+    output wire buzzer,            // passive buzzer on the expansion header,
+    output wire buzzer_n,          // driven across this pair of pins
     output wire hdmi_oen,
     output wire TMDS_clk_p,
     output wire TMDS_clk_n,
@@ -61,6 +64,8 @@ battle_core u_core (
     .ps2_clk (ps2_clk),
     .ps2_cmd (ps2_cmd),
     .led     (led),
+    .buzzer  (buzzer),
+    .buzzer_n (buzzer_n),
     .vid_r  (vid_r),
     .vid_g  (vid_g),
     .vid_b  (vid_b),
