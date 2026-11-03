@@ -2,7 +2,8 @@
 
 The fourth graded assignment, on images: a picture cut into a 4x4 grid,
 one piece missing, and the other fifteen slid around until it is whole
-again. It is still hardwired, with no CPU and no software. A state machine
+again. It is the classic 15-puzzle with picture faces. Every tile can also
+carry its number, 1 to 15, switched on or off with a button. It is still hardwired, with no CPU and no software. A state machine
 plays the game, and the picture is drawn live from an image ROM, pixel by
 pixel, as the beam scans. There is no framebuffer.
 
@@ -47,9 +48,11 @@ any time.
 | `key[0]` / `key[1]` / `key[2]` / `key[3]` | up / down / left / right |
 | up + down together | reshuffle |
 | left + right, held | peek at the finished picture |
+| down + left together (the two middle buttons) | tile numbers on / off |
 | J10 buttons (optional) | the same four directions, plus a real start on pin 7 |
 
-The second button of a chord moves nothing, so a chord costs at most the one
+A direction only counts as a move while no other direction is held. So the
+second button of a chord moves nothing, and a chord costs at most the one
 move its first button made. If that move is still sliding when the chord
 completes, the reshuffle waits for the tile to land. The J10 wiring is project01b_soulbattle's: five
 buttons to ground, on pins W19, W18, R14, P14 and Y17, with internal
@@ -62,6 +65,7 @@ pull-ups. With nothing wired, they read as released.
 | arrow keys | `0` `1` `2` `3` | up / down / left / right |
 | `t` (start) or `a` | `7` | start / reshuffle |
 | `s` (select) or `b`, held | - | peek |
+| `x` or `y` | - | tile numbers on / off |
 
 The playground's `ui_in` buttons are toggles: a click flips the bit and it
 stays flipped. So every flip, in either direction, counts as one press.
@@ -134,6 +138,22 @@ shows the finished picture or the dimmed board. `|dx|` and `|dy|` are
 formed with compare-and-subtract, so nothing is signed. `r^2` sits in a
 register, because it depends only on `r` and not on the pixel.
 
+### Tile numbers
+
+Each tile in play gets a small badge in its top-left corner. The badge
+darkens the picture underneath (colour >> 2), and the tile's number, 1 to
+15, sits on it in white. The digits are project01's 5x7 `digit_font`, copied
+in unchanged and drawn at 2x, so each digit is 10x14 px. Numbers 10-15 use
+two digits and a wider badge.
+
+Stage 0 decides, from the tile and the pixel's position inside it, whether
+the pixel is in the badge, and whether it is in a lit dot of a digit. Those
+are two more pipeline flags, applied in stage 3.
+
+The sliding sprite carries its number with it. The title, a peek and the
+finished picture inside the iris stay clean. Numbers are on after reset, and
+the setting survives new games.
+
 ### The other effects
 
 These are all per-pixel tests in stage 0, applied in stage 3:
@@ -174,6 +194,7 @@ project04_slidepuzzle/
     vga_timing.v       640x480@60 timing (project03's, unchanged)
     tt_um_hextex_slidepuzzle.v   playground top
     gamepad_pmod_rx.v  gamepad receiver (playground only)
+    digit_font.v       5x7 digits for the tile numbers (project01's, unchanged)
     image.mem          picture, 8-bit indices    (generated)
     palette.mem        256 x RRGGBB              (generated)
   hdl/               AX7010 only: top, HDMI, button debounce
@@ -224,14 +245,14 @@ Implemented on the xc7z010 (Vivado, after place and route):
 
 | Resource | Used | of |
 |---|---|---|
-| Slice LUTs | 929 | 17600 |
-| Registers | 535 | 35200 |
+| Slice LUTs | 991 | 17600 |
+| Registers | 539 | 35200 |
 | Block RAM tiles | 24.5 | 60 |
 | DSP48 | 2 | 80 |
 
 - **Block RAM:** the picture takes 24 RAMB36 and the palette one RAMB18.
 - **DSPs:** the iris's `dx^2` and `dy^2` use the two DSPs.
-- **Timing:** met at 25.175 MHz with 17.8 ns of slack.
+- **Timing:** met at 25.175 MHz with 16.2 ns of slack.
 - **Warnings:** Vivado reports reading both `.mem` files. The only warning
   is the usual `sys_clk` redefinition by the Clocking Wizard.
 
@@ -256,16 +277,16 @@ Both testbenches run from `src/` so that the `.mem` files are found:
 
 ```sh
 cd project04_slidepuzzle/src
-iverilog -o /tmp/tb_puzzle.vvp ../sim/tb_puzzle.v puzzle_core.v vga_timing.v
+iverilog -o /tmp/tb_puzzle.vvp ../sim/tb_puzzle.v puzzle_core.v vga_timing.v digit_font.v
 vvp /tmp/tb_puzzle.vvp && python3 ../sim/check_frames.py
 
 iverilog -o /tmp/tb_tt.vvp ../sim/tb_tt.v tt_um_hextex_slidepuzzle.v \
-         puzzle_core.v vga_timing.v gamepad_pmod_rx.v
+         puzzle_core.v vga_timing.v gamepad_pmod_rx.v digit_font.v
 vvp /tmp/tb_tt.vvp && python3 ../sim/check_tt.py
 
 # shuffle soak: six full 200-move shuffles, each checked for solvability
 iverilog -P tb_puzzle.SHUF=200 -P tb_puzzle.REPLAY=0 -o /tmp/tb_soak.vvp \
-         ../sim/tb_puzzle.v puzzle_core.v vga_timing.v
+         ../sim/tb_puzzle.v puzzle_core.v vga_timing.v digit_font.v
 vvp /tmp/tb_soak.vvp
 
 # the playground's compile, with its own Verilator flags (warnings are fine;
@@ -274,12 +295,12 @@ cd ..
 verilator --cc -O3 -Wall -Wno-EOFNEWLINE -Wno-DECLFILENAME --x-assign fast \
           --debug-check -Isrc/ --top-module tt_um_hextex_slidepuzzle -Wno-fatal \
           --Mdir /tmp/vl src/tt_um_hextex_slidepuzzle.v src/puzzle_core.v \
-          src/vga_timing.v src/gamepad_pmod_rx.v
+          src/vga_timing.v src/gamepad_pmod_rx.v src/digit_font.v
 cd src
 
 # the AX7010 top's buttons (Clocking Wizard and hdmi_tx stubbed in the bench)
 iverilog -o /tmp/tb_top.vvp ../sim/tb_top.v ../hdl/top.v ../hdl/pad_input.v \
-         puzzle_core.v vga_timing.v
+         puzzle_core.v vga_timing.v digit_font.v
 vvp /tmp/tb_top.vvp
 ```
 
@@ -292,9 +313,11 @@ vvp /tmp/tb_top.vvp
   - every board is a permutation with solvable parity;
   - a move off the edge of the board changes nothing;
   - a press during a slide is ignored;
-  - peek blocks moves.
-- It dumps seven frames: title, shuffled, peek, mid-slide, mid-iris, final,
-  and soak in the soak run.
+  - peek blocks moves;
+  - the numbers toggle hides the numbers and shows them again.
+- It dumps eight frames: title, shuffled, peek, numbers off, mid-slide,
+  mid-iris, final, and soak in the soak run. Numbers are on in every one
+  except "numbers off", and the model draws them too.
 - `check_frames.py` rebuilds every pixel of every frame from `image.mem`,
   `palette.mem` and the logged board state alone, then compares exactly.
 
@@ -303,7 +326,7 @@ vvp /tmp/tb_top.vvp
 - The gamepad model is a line-for-line copy of the playground's
   `updateGamepadPmod()`.
 - It checks that:
-  - start, the arrows and select each act exactly once per press;
+  - start, the arrows, select and x each act exactly once per press;
   - each switch flip is one press;
   - a switch already on through reset is not a press;
   - `ui_in[7]` reshuffles;
@@ -322,6 +345,7 @@ inside Vivado, and the picture behind them is already checked by
 - up then down gives one up, no down and a reshuffle, even when the up
   started a slide;
 - left then right peeks while held, with one left and no right;
+- down then left flips the numbers, with one down, no left and no peek;
 - the J10 direction and start buttons work;
 - every push is exactly one press.
 

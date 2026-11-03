@@ -29,6 +29,7 @@ add_files -fileset sources_1 [glob $repo_dir/hdl/*.v]
 add_files -fileset sources_1 [list \
   $repo_dir/src/puzzle_core.v \
   $repo_dir/src/vga_timing.v \
+  $repo_dir/src/digit_font.v \
 ]
 
 # The picture and its palette. puzzle_core.v loads them with a bare file name,

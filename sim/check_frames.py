@@ -64,28 +64,70 @@ def bevel(c, lx, ly):
     return c
 
 
+# project01's 5x7 digit font, row by row; bit 4 is the leftmost column
+FONT = np.zeros((16, 8), np.int64)
+for d, rows in enumerate([
+        [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110],
+        [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+        [0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111],
+        [0b11111, 0b00010, 0b00100, 0b00010, 0b00001, 0b10001, 0b01110],
+        [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010],
+        [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110],
+        [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110],
+        [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
+        [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
+        [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100]]):
+    FONT[d, :7] = rows
+
+
+def with_numbers(img, tile, lx, ly, mask):
+    """The 1..15 badge in a tile's top-left corner, where mask is set: a dark
+    badge (colour >> 2) from (4,4), and the number in 240-white, 2x scale."""
+    img = img.copy()
+    num = tile + 1
+    tens = num >= 10
+    unit = np.where(tens, num - 10, num)
+    badge = mask & (lx >= 4) & (lx < 4 + np.where(tens, 28, 16)) & (ly >= 4) & (ly < 24)
+    rows = (ly >= 7) & (ly < 21)
+    d0 = (lx >= 7) & (lx < 17)
+    d1 = tens & (lx >= 19) & (lx < 29)
+    digit = np.where(d1, unit, np.where(tens, 1, unit))
+    col = np.where(d1, lx - 19, lx - 7) // 2
+    row = np.clip((ly - 7) // 2, 0, 7)
+    bit = (FONT[np.clip(digit, 0, 15), row] >> np.clip(4 - col, 0, 7)) & 1
+    glyph = badge & rows & (d0 | d1) & (col >= 0) & (col <= 4) & (bit == 1)
+    img[badge & ~glyph] = img[badge & ~glyph] >> 2
+    img[glyph] = 240
+    return img
+
+
 def full_picture():
     return tile_pixels(SLOT, LX, LY)
 
 
-def board_view(board, extra_gap=None):
+def board_view(board, extra_gap=None, numbers=False):
     tile = np.array(board)[SLOT]
     img = bevel(tile_pixels(tile, LX, LY), LX, LY)
     gap = tile == 15
     if extra_gap is not None:
         gap |= SLOT == extra_gap
+    if numbers:
+        img = with_numbers(img, tile, LX, LY, ~gap)
     shadow = (LX < 5) | (LY < 5)
     gap_col = np.where(shadow[..., None], [6, 6, 12], [18, 18, 30])
     img[gap] = gap_col[gap]
     return img
 
 
-def with_sprite(img, tile, mx, my):
+def with_sprite(img, tile, mx, my, numbers=False):
     img = img.copy()
     m = (XS >= mx) & (XS < mx + 160) & (YS >= my) & (YS < my + 120)
     slx, sly = XS - mx, YS - my
-    spr = bevel(tile_pixels(np.full_like(XS, tile), slx % 160, sly % 120),
+    tiles = np.full_like(XS, tile)
+    spr = bevel(tile_pixels(tiles, slx % 160, sly % 120),
                 slx % 160, sly % 120)
+    if numbers:
+        spr = with_numbers(spr, tiles, slx % 160, sly % 120, m)
     img[m] = spr[m]
     return img
 
@@ -102,18 +144,19 @@ def with_shine(img, pos):
 def expected(info):
     st = info["state"]
     board = info["board"]
+    nums = bool(info.get("numbers", 0))
     if st in (S_TITLE, S_SHUFFLE):
         img = full_picture()
         return with_shine(img, info["shine"]) if st == S_TITLE else img
     if st == S_PLAY:
-        return full_picture() if info["peek"] else board_view(board)
+        return full_picture() if info["peek"] else board_view(board, numbers=nums)
     if st == S_SLIDE:
-        img = board_view(board, extra_gap=info["mov_from"])
-        return with_sprite(img, info["mov_tile"], info["mx"], info["my"])
+        img = board_view(board, extra_gap=info["mov_from"], numbers=nums)
+        return with_sprite(img, info["mov_tile"], info["mx"], info["my"], numbers=nums)
     if st == S_WIN:
         r = info["iris_r"]
         inside = (XS - 320) ** 2 + (YS - 240) ** 2 < r * r
-        img = board_view(board) >> 1
+        img = board_view(board, numbers=nums) >> 1
         img[inside] = full_picture()[inside]
         return img
     raise ValueError(st)

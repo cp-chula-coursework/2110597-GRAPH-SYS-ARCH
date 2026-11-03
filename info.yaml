@@ -25,6 +25,7 @@ project:
     - "puzzle_core.v"
     - "vga_timing.v"
     - "gamepad_pmod_rx.v"
+    - "digit_font.v"
 
 pinout:
   # Inputs

@@ -17,6 +17,7 @@
 //   key[0] up    key[1] down    key[2] left    key[3] right
 //   up + down together     : reshuffle (a new game)
 //   left + right, held     : peek at the finished picture
+//   down + left together   : tile numbers on / off (the two middle buttons)
 // The five optional buttons on J10 (the same wiring as project01b) work
 // alongside the board's. ext_key[4] is a real start button there, so the
 // chord is not needed.
@@ -71,6 +72,18 @@ end
 wire [3:0] dir_down   = dir & ~dir_prev;
 wire       start_down = start & ~start_prev;
 
+// down + left: tile numbers on / off
+wire nums_chord = dir[1] & dir[2];
+reg  nums_prev  = 1'b0;
+always @(posedge pixel_clk) nums_prev <= nums_chord;
+wire nums_down  = nums_chord & ~nums_prev;
+
+// a direction only counts as a move when no other direction is held, so the
+// second button of any chord moves nothing
+wire [3:0] others_held = {|(dir & 4'b0111), |(dir & 4'b1011),
+                          |(dir & 4'b1101), |(dir & 4'b1110)};
+wire [3:0] move_down   = dir_down & ~others_held;
+
 // ---- the game
 wire [7:0] vid_r, vid_g, vid_b;
 wire       vid_hs, vid_vs, vid_de;
@@ -95,13 +108,13 @@ puzzle_core u_core (
     .hs_in       (t_hs),
     .vs_in       (t_vs),
     .blank_in    (t_blank),
-    // the second button of a chord does not move a tile as well
-    .press_up    (dir_down[0] & ~dir[1]),
-    .press_down  (dir_down[1] & ~dir[0]),
-    .press_left  (dir_down[2] & ~dir[3]),
-    .press_right (dir_down[3] & ~dir[2]),
+    .press_up    (move_down[0]),
+    .press_down  (move_down[1]),
+    .press_left  (move_down[2]),
+    .press_right (move_down[3]),
     .press_start (start_down),
     .peek        (dir[2] & dir[3]),
+    .press_numbers (nums_down),
     .r           (vid_r),
     .g           (vid_g),
     .b           (vid_b),
