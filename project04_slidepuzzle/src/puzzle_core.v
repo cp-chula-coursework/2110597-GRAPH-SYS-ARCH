@@ -36,12 +36,14 @@
 //   - WIN opens the finished picture from the centre of the screen as a
 //     growing circle (dx^2 + dy^2 < r^2) over the dimmed board, then falls
 //     back to TITLE.
+//   - press_numbers shows or hides a 1..15 number on every tile in play,
+//     which turns the picture puzzle into the classic numbered 15-puzzle.
 //
 // Pixel pipeline (latency 4; hs/vs/de are delayed to match):
 //   0: slot / tile / address / effect flags from (x, y)   -> registered
 //   1: picture ROM read: palette index                    -> registered
 //   2: palette read: 24-bit colour                        -> registered
-//   3: bevels, gap, dimming, shine                        -> outputs
+//   3: bevels, gap, numbers, dimming, shine               -> outputs
 //
 // Every signal is 32 bits wide or less, and nothing is signed, so the VGA
 // Playground's simulator can run the design.
@@ -71,6 +73,7 @@ module puzzle_core #(
     input  wire       press_right,  // the tile left of the gap moves right
     input  wire       press_start,  // new game / reshuffle
     input  wire       peek,         // held: show the finished picture
+    input  wire       press_numbers, // show / hide the tile numbers
 
     // video out, 4 clocks behind (x, y)
     output reg  [7:0] r,
@@ -121,6 +124,7 @@ module puzzle_core #(
     reg  [8:0]  iris_r;
     reg  [17:0] iris_r2;
     reg  [10:0] shine_pos;
+    reg         show_numbers;    // tile numbers on or off
 
     // the board is solved when every slot holds its own tile
     wire solved = (board[0]  == 4'd0)  && (board[1]  == 4'd1)  &&
@@ -196,6 +200,12 @@ module puzzle_core #(
                          ((state == S_TITLE) || (state == S_PLAY) || (state == S_WIN));
     wire slide_commit  = (state == S_SLIDE) && tick && slide_done;
     wire load_solved   = rst || begin_shuffle;
+
+    // ---- tile numbers on / off: on after reset, a press flips it
+    always @(posedge clk) begin
+        if (rst)                show_numbers <= 1'b1;
+        else if (press_numbers) show_numbers <= ~show_numbers;
+    end
 
     // ---- the board, and its only three writers
     // Kept in its own block, written out entry by entry, because the VGA
@@ -398,6 +408,44 @@ module puzzle_core #(
 
     wire dim = (state == S_WIN) && !in_iris;
 
+    // ---- tile numbers: a 1..15 badge in each tile's top-left corner
+    // A dark see-through badge with the number in white, drawn 2x from
+    // project01's 5x7 digit font. They make it the classic 15-puzzle while
+    // the picture still shows through. Only tiles in play carry one: the
+    // title, a peek and the finished picture inside the iris stay clean.
+    //
+    //   lx  4 ..                     ly  4 ..  23   badge
+    //       7 .. 16   first digit        7 ..  20   glyph rows (7 x 2 px)
+    //      19 .. 28   second digit (10-15 only)
+    wire numbers_on = show_numbers && !full_view && !is_gap;
+
+    wire [4:0] num      = {1'b0, tile} + 5'd1;        // 1..15
+    wire       num_tens = (num >= 5'd10);
+    wire [4:0] num_m10  = num - 5'd10;
+    wire [3:0] num_unit = num_tens ? num_m10[3:0] : num[3:0];
+    wire [7:0] badge_w  = num_tens ? 8'd28 : 8'd16;
+
+    wire in_badge = numbers_on && (lx >= 8'd4) && (lx < 8'd4 + badge_w) &&
+                    (ly >= 7'd4) && (ly < 7'd24);
+    wire in_rows  = (ly >= 7'd7) && (ly < 7'd21);
+    wire in_d0    = (lx >= 8'd7) && (lx < 8'd17);
+    wire in_d1    = num_tens && (lx >= 8'd19) && (lx < 8'd29);
+
+    wire [3:0] glyph_digit = in_d1 ? num_unit : (num_tens ? 4'd1 : num_unit);
+    wire [7:0] glyph_dx    = in_d1 ? (lx - 8'd19) : (lx - 8'd7);
+    wire [6:0] glyph_dy    = ly - 7'd7;
+    wire [4:0] glyph_bits;
+
+    digit_font u_font (
+        .digit    (glyph_digit),
+        .row      (glyph_dy[3:1]),
+        .row_bits (glyph_bits)
+    );
+
+    // row_bits[4] is the glyph's leftmost column
+    wire [2:0] glyph_col = 3'd4 - glyph_dx[3:1];
+    wire in_glyph = in_badge && in_rows && (in_d0 || in_d1) && glyph_bits[glyph_col];
+
     // title shine: a diagonal band of light that sweeps across now and then
     wire [10:0] diag = {1'b0, x} + {1'b0, y};
     wire [10:0] shine_d = (diag >= shine_pos) ? (diag - shine_pos)
@@ -418,10 +466,11 @@ module puzzle_core #(
     end
 
     // flags carried down the pipeline: {de, hs, vs, gap, gap_shadow,
-    //                                   bevel_hi, bevel_lo, dim, shine_hi, shine_lo}
-    localparam FW = 10;
+    //   bevel_hi, bevel_lo, dim, shine_hi, shine_lo, badge, glyph}
+    localparam FW = 12;
     wire [FW-1:0] flags0 = {~blank_in, hs_in, vs_in, is_gap, gap_shadow,
-                            bevel_hi, bevel_lo, dim, shine_hi, shine_lo};
+                            bevel_hi, bevel_lo, dim, shine_hi, shine_lo,
+                            in_badge, in_glyph};
 
     reg [16:0]   addr1;
     reg [FW-1:0] flags1, flags2, flags3;
@@ -439,21 +488,23 @@ module puzzle_core #(
         flags3 <= flags2;
     end
 
-    wire f_de       = flags3[9];
-    wire f_hs       = flags3[8];
-    wire f_vs       = flags3[7];
-    wire f_gap      = flags3[6];
-    wire f_gapsh    = flags3[5];
-    wire f_hi       = flags3[4];
-    wire f_lo       = flags3[3];
-    wire f_dim      = flags3[2];
-    wire f_shine_hi = flags3[1];
-    wire f_shine_lo = flags3[0];
+    wire f_de       = flags3[11];
+    wire f_hs       = flags3[10];
+    wire f_vs       = flags3[9];
+    wire f_gap      = flags3[8];
+    wire f_gapsh    = flags3[7];
+    wire f_hi       = flags3[6];
+    wire f_lo       = flags3[5];
+    wire f_dim      = flags3[4];
+    wire f_shine_hi = flags3[3];
+    wire f_shine_lo = flags3[2];
+    wire f_badge    = flags3[1];
+    wire f_glyph    = flags3[0];
 
     // one colour channel through the effects
     function [7:0] shade;
         input [7:0] c;
-        input       hi, lo, dimmed, sh_hi, sh_lo;
+        input       hi, lo, dimmed, sh_hi, sh_lo, badge, glyph;
         reg   [7:0] t;
         begin
             t = c;
@@ -461,6 +512,8 @@ module puzzle_core #(
             else if (lo)     t = t >> 1;                 // half as bright
             if (sh_hi)       t = t + ((~t) >> 1);
             else if (sh_lo)  t = t + ((~t) >> 2);
+            if (glyph)       t = 8'd240;                 // the number
+            else if (badge)  t = t >> 2;                 // its dark badge
             if (dimmed)      t = t >> 1;
             shade = t;
         end
@@ -482,9 +535,9 @@ module puzzle_core #(
             g <= f_dim ? (gap_g >> 1) : gap_g;
             b <= f_dim ? (gap_b >> 1) : gap_b;
         end else begin
-            r <= shade(rgb3[23:16], f_hi, f_lo, f_dim, f_shine_hi, f_shine_lo);
-            g <= shade(rgb3[15:8],  f_hi, f_lo, f_dim, f_shine_hi, f_shine_lo);
-            b <= shade(rgb3[7:0],   f_hi, f_lo, f_dim, f_shine_hi, f_shine_lo);
+            r <= shade(rgb3[23:16], f_hi, f_lo, f_dim, f_shine_hi, f_shine_lo, f_badge, f_glyph);
+            g <= shade(rgb3[15:8],  f_hi, f_lo, f_dim, f_shine_hi, f_shine_lo, f_badge, f_glyph);
+            b <= shade(rgb3[7:0],   f_hi, f_lo, f_dim, f_shine_hi, f_shine_lo, f_badge, f_glyph);
         end
     end
 

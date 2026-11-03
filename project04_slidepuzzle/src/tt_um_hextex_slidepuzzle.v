@@ -5,7 +5,8 @@
 // same puzzle_core as the AX7010 build and changes only the two ends:
 //
 //   in   the playground's inputs. Gamepad mode (recommended) uses the arrow
-//        keys plus t = start and s = peek. The ui_in switches work too:
+//        keys plus t = start, s = peek and x = tile numbers on/off. The
+//        ui_in switches work too:
 //          ui_in[0] up      ui_in[1] down     ui_in[2] left
 //          ui_in[3] right   ui_in[7] start / reshuffle
 //        ui_in[6:4] are left alone because gamepad mode drives them.
@@ -83,6 +84,7 @@ module tt_um_hextex_slidepuzzle (
     wire press_right = gp_down[4] | sw_flip[3];
     wire press_start = gp_down[8] | gp_down[3] | sw_flip[4];   // start or a
     wire peek        = gp[9] | gp[11];                         // select or b
+    wire press_nums  = gp_down[2] | gp_down[10];               // x or y
 
     // ---- the game
     wire [7:0] vr, vg, vb;
@@ -103,6 +105,7 @@ module tt_um_hextex_slidepuzzle (
         .press_right (press_right),
         .press_start (press_start),
         .peek        (peek),
+        .press_numbers (press_nums),
         .r           (vr),
         .g           (vg),
         .b           (vb),
@@ -138,7 +141,7 @@ module tt_um_hextex_slidepuzzle (
     assign uio_out = 8'h00;
     assign uio_oe  = 8'h00;
 
-    wire _unused = &{ena, uio_in, gp_present, gp[2:0], gp[10], game_state, 1'b0};
+    wire _unused = &{ena, uio_in, gp_present, gp[1:0], game_state, 1'b0};
 
 endmodule
 

@@ -165,6 +165,9 @@ no divider.
 - **Always solvable** - the board is shuffled by 200 random *legal* moves of
   the gap from the solved state, never by a random arrangement (half of
   those are unsolvable).
+- **Numbers on or off** - every tile can carry its number (1-15) on a small
+  badge, drawn with project01's 5x7 digit font. That makes it the classic
+  15-puzzle, with the picture still showing through.
 - **Slides and an iris** - a moving tile is a 160x120 sprite that glides
   over 10 frames. On a win, the finished picture opens as a growing circle
   (`dx^2 + dy^2 < r^2`) over the dimmed board.

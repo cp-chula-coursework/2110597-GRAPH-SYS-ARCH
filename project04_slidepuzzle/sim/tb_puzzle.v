@@ -14,6 +14,7 @@
 //   1. title screen                                       -> title.ppm
 //   2. start: the shuffle is watched move by move         -> shuffled.ppm
 //   3. peek held shows the finished picture, and blocks moves -> peek.ppm
+//      tile numbers (on by default) are hidden and shown again -> nonumbers.ppm
 //   4. a press with no tile to move does nothing (tested the first time
 //      the gap is against an edge during step 5)
 //   5. the shuffle is undone by pressing the same directions in reverse order
@@ -42,7 +43,7 @@ module tb_puzzle;
     always #20 clk = ~clk;
 
     reg rst = 1'b1;
-    reg p_up = 0, p_down = 0, p_left = 0, p_right = 0, p_start = 0, peek = 0;
+    reg p_up = 0, p_down = 0, p_left = 0, p_right = 0, p_start = 0, peek = 0, p_nums = 0;
 
     wire       t_hs, t_vs, t_blank;
     wire [9:0] t_x, t_y;
@@ -62,6 +63,7 @@ module tb_puzzle;
         .x(t_x), .y(t_y), .hs_in(t_hs), .vs_in(t_vs), .blank_in(t_blank),
         .press_up(p_up), .press_down(p_down), .press_left(p_left),
         .press_right(p_right), .press_start(p_start), .peek(peek),
+        .press_numbers(p_nums),
         .r(r), .g(g), .b(b), .hs(o_hs), .vs(o_vs), .de(o_de),
         .game_state(st)
     );
@@ -92,7 +94,7 @@ module tb_puzzle;
                     dut.mx, dut.my, dut.iris_r, dut.shine_pos);
             for (k = 0; k < 16; k = k + 1)
                 $fwrite(info_fd, " %0d", dut.board[k]);
-            $fwrite(info_fd, " peek %0d\n", peek);
+            $fwrite(info_fd, " peek %0d numbers %0d\n", peek, dut.show_numbers);
         end else if (dumping && o_de) begin
             $fwrite(dump_fd, "%c%c%c", r, g, b);
             npix = npix + 1;
@@ -119,15 +121,16 @@ module tb_puzzle;
         for (f = 0; f < n; f = f + 1) @(posedge dut.tick);
     endtask
 
-    task press(input integer which);   // 0 up 1 down 2 left 3 right 4 start
+    task press(input integer which);   // 0 up 1 down 2 left 3 right 4 start 5 numbers
         begin
             @(negedge clk);
             case (which)
                 0: p_up = 1;  1: p_down = 1;  2: p_left = 1;  3: p_right = 1;
+                5: p_nums = 1;
                 default: p_start = 1;
             endcase
             @(negedge clk);
-            p_up = 0; p_down = 0; p_left = 0; p_right = 0; p_start = 0;
+            p_up = 0; p_down = 0; p_left = 0; p_right = 0; p_start = 0; p_nums = 0;
         end
     endtask
 
@@ -271,6 +274,20 @@ module tb_puzzle;
             end
             dump("../sim/out/peek.ppm");
             @(negedge clk) peek = 0;
+
+            // ---- numbers: on after reset, a press hides them, another shows them
+            if (dut.show_numbers !== 1'b1) begin
+                $display("FAIL: tile numbers not on after reset"); errors = errors + 1;
+            end
+            press(5);
+            if (dut.show_numbers !== 1'b0) begin
+                $display("FAIL: numbers press did not hide them"); errors = errors + 1;
+            end
+            dump("../sim/out/nonumbers.ppm");
+            press(5);
+            if (dut.show_numbers !== 1'b1) begin
+                $display("FAIL: numbers press did not show them again"); errors = errors + 1;
+            end
 
             // ---- 4 + 5. undo the shuffle; on the way, the first time the gap
             // is against an edge, a press with nothing to move must do nothing
