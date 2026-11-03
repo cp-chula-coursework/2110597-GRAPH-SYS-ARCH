@@ -122,8 +122,8 @@ tile fills each cell, a tile ROM holding the tile pixels, a sprite ROM +
 window-test renderer for the player, and a hardwired state machine for the
 game logic - still no CPU, no software). The brief covers the lecture's
 sections up through scrolling and the single-sprite renderer, plus "use
-state machine to do simple game logic"; the multi-sprite/line-buffer PPU is
-the *next* assignment.
+state machine to do simple game logic". The lecture's later multi-sprite /
+line-buffer PPU sections are outside this brief.
 
 This implementation is a playable mini platformer (640x480@60 over the same
 HDMI pipeline):
@@ -149,6 +149,39 @@ camera/animation invariants are checked and real rendered frames are dumped
 to image files. See
 [`project03_platformer/README.md`](project03_platformer/README.md) for
 controls, architecture, and build steps.
+
+### `project04_slidepuzzle/` - Image slide puzzle
+
+The fourth graded assignment, on images. A 320x240 picture is cut into a 4x4
+grid of tiles with one missing, and the player slides the rest home. The
+picture is never moved. The game rewrites a 16-entry table saying which tile
+sits in each slot, and the renderer turns every beam position into a slot,
+a tile and an address in the image ROM. There is no framebuffer, no CPU and
+no divider.
+
+- **Indexed colour** - the picture is stored as 8-bit palette indices plus a
+  256-colour palette, the way consoles stored backgrounds. A script converts
+  any picture.
+- **Always solvable** - the board is shuffled by 200 random *legal* moves of
+  the gap from the solved state, never by a random arrangement (half of
+  those are unsolvable).
+- **Slides and an iris** - a moving tile is a 160x120 sprite that glides
+  over 10 frames. On a win, the finished picture opens as a growing circle
+  (`dx^2 + dy^2 < r^2`) over the dimmed board.
+
+It is the first project here to run on **two targets from one core**: the
+AX7010 over HDMI, and the browser-based VGA Playground through a Tiny
+Tapeout-style top (Tiny VGA pins, Bayer-dithered to 2 bits per channel,
+gamepad input). The project folder therefore has an `info.yaml` and a
+`src/` alongside the usual `hdl/`, and a script builds the branch the
+playground loads. Two Icarus testbenches check it:
+
+- one plays a whole game: it shuffles, then undoes the shuffle move by move
+  to a win, and every frame it dumps is checked pixel-exact against a
+  Python model;
+- one drives the playground top the way the playground does.
+
+See [`project04_slidepuzzle/README.md`](project04_slidepuzzle/README.md).
 
 ## Building any project
 
