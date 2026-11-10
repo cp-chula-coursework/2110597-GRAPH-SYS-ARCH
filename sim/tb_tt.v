@@ -3,7 +3,7 @@
 //
 //   cd src
 //   iverilog -o /tmp/tb_tt.vvp ../sim/tb_tt.v tt_um_hextex_slidepuzzle.v \
-//            puzzle_core.v vga_timing.v gamepad_pmod_rx.v digit_font.v
+//            puzzle_core.v vga_timing.v gamepad_pmod_rx.v
 //   vvp /tmp/tb_tt.vvp && python3 ../sim/check_tt.py
 //
 // The gamepad here is a copy of the playground's InputController.ts
@@ -219,21 +219,6 @@ module tb_tt;
         else            $display("ok   select peeks");
         gamepad_hold(12'h000, 1);
         if (dut.peek) begin $display("FAIL: peek stuck on"); errors = errors + 1; end
-
-        // ---- gamepad: x flips the tile numbers, once per press
-        if (dut.u_core.show_numbers !== 1'b1) begin
-            $display("FAIL: numbers not on after reset"); errors = errors + 1;
-        end
-        gamepad_hold(12'h200, 2);                  // x, held two packets
-        gamepad_hold(12'h000, 1);
-        if (dut.u_core.show_numbers !== 1'b0) begin
-            $display("FAIL: x did not hide the numbers"); errors = errors + 1;
-        end else $display("ok   x hides the numbers");
-        gamepad_hold(12'h200, 1);
-        gamepad_hold(12'h000, 1);
-        if (dut.u_core.show_numbers !== 1'b1) begin
-            $display("FAIL: x did not show the numbers again"); errors = errors + 1;
-        end else $display("ok   x shows them again");
 
         // ---- ui_in switches: every flip is a press, either way
         d = legal_press(dut.u_core.gap);

@@ -12,7 +12,7 @@ Writes, next to the RTL that loads them:
                      row-major (address = y*320 + x)
     src/palette.mem  256 lines, one 24-bit RRGGBB colour per index
 
-The picture is centre-cropped to 4:3, scaled to 320x240 and reduced to the 256
+The picture is cropped to 4:3 (centred, or placed with --crop-x/--crop-y), scaled to 320x240 and reduced to the 256
 colours that suit it best (median cut, Floyd-Steinberg dithered), the way an
 indexed-colour console stores a background: a byte per pixel, and the real
 colour looked up in a small palette on the way out.
@@ -147,16 +147,19 @@ def test_scene() -> Image.Image:
     return Image.fromarray(np.clip(img, 0, 255).astype(np.uint8), "RGB")
 
 
-def load_picture(path: str) -> Image.Image:
+def load_picture(path: str, crop_x: float = 0.5, crop_y: float = 0.5) -> Image.Image:
     im = Image.open(path).convert("RGB")
     w, h = im.size
-    # centre-crop to 4:3 before scaling, so nothing is stretched
+    # crop to 4:3 before scaling, so nothing is stretched; crop_x / crop_y
+    # place the window (0 = left/top edge, 0.5 = centre, 1 = right/bottom edge)
     if w * 3 > h * 4:
         nw = h * 4 // 3
-        im = im.crop(((w - nw) // 2, 0, (w - nw) // 2 + nw, h))
+        x0 = round((w - nw) * crop_x)
+        im = im.crop((x0, 0, x0 + nw, h))
     else:
         nh = w * 3 // 4
-        im = im.crop((0, (h - nh) // 2, w, (h - nh) // 2 + nh))
+        y0 = round((h - nh) * crop_y)
+        im = im.crop((0, y0, w, y0 + nh))
     return im.resize((W, H), Image.LANCZOS)
 
 
@@ -165,10 +168,14 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("picture", nargs="?", help="input picture (default: built-in test scene)")
     ap.add_argument("--preview", help="also save the 256-colour result as a PNG")
+    ap.add_argument("--crop-x", type=float, default=0.5,
+                    help="where the 4:3 window sits across a wide picture: 0 left, 0.5 centre (default), 1 right")
+    ap.add_argument("--crop-y", type=float, default=0.5,
+                    help="where the 4:3 window sits down a tall picture: 0 top, 0.5 centre (default), 1 bottom")
     ap.add_argument("--out", default=SRC, help="output directory (default: src/)")
     args = ap.parse_args()
 
-    im = load_picture(args.picture) if args.picture else test_scene()
+    im = load_picture(args.picture, args.crop_x, args.crop_y) if args.picture else test_scene()
     q = im.quantize(colors=256, method=Image.Quantize.MEDIANCUT,
                     dither=Image.Dither.FLOYDSTEINBERG)
 
