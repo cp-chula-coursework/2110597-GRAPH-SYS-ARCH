@@ -200,12 +200,21 @@ the project. Icarus finds it because the testbenches run from `src/`.
 python3 scripts/gen_image.py my_picture.jpg --preview /tmp/preview.png
 ```
 
-The script centre-crops the picture to 4:3, scales it to 320x240, reduces
-it to 256 colours, and rewrites `src/image.mem` and `src/palette.mem`. With
-no argument it writes the built-in test scene (a lake at dusk, original
-procedural art). The puzzle is easiest when each part of the picture looks
-different: a large plain sky makes for tiles that cannot be told apart. Then
-rerun the simulations; nothing in them depends on which picture it is.
+The picture in `src/` now is `images/mambo.jpeg`. It is square, so it was
+made with `--crop-y 1`: the 4:3 window sits at the bottom, which keeps the
+whole face and loses only the top of the hat.
+
+```sh
+python3 scripts/gen_image.py images/mambo.jpeg --crop-y 1
+```
+
+The script crops the picture to 4:3, scales it to 320x240, reduces
+it to 256 colours, and rewrites `src/image.mem` and `src/palette.mem`. The
+crop is centred unless `--crop-x` / `--crop-y` move it (0 = left/top edge,
+1 = right/bottom edge). With no argument it writes the built-in test scene (a
+lake at dusk, original procedural art). The puzzle is easiest when each part
+of the picture looks different: a large plain sky makes for tiles that cannot
+be told apart. Then rerun the simulations; nothing in them depends on which picture it is.
 
 ## Building
 
@@ -331,4 +340,4 @@ inside Vivado, and the picture behind them is already checked by
 - [ ] Hardware bring-up on the AX7010
 - [ ] Video of it running on real hardware
 - [ ] Short written explanation of the hardware
-- [ ] Swap the test scene for the final picture (`scripts/gen_image.py`)
+- [x] Swap the test scene for the final picture (`scripts/gen_image.py`)
