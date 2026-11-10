@@ -3,7 +3,7 @@
 //
 //   cd src
 //   iverilog -o /tmp/tb_top.vvp ../sim/tb_top.v ../hdl/top.v ../hdl/pad_input.v \
-//            puzzle_core.v vga_timing.v digit_font.v
+//            puzzle_core.v vga_timing.v
 //   vvp /tmp/tb_top.vvp
 //
 // The Clocking Wizard and hdmi_tx are stubbed below. The wizard's IP and the
@@ -77,7 +77,6 @@ module tb_top;
 
     wire [2:0] state = dut.u_core.state;
     integer errors = 0;
-    reg     before_nums;
 
     integer n_up = 0, n_down = 0, n_left = 0, n_right = 0, n_start = 0;
     reg     saw_shuffle = 0, saw_peek = 0;
@@ -172,20 +171,6 @@ module tb_top;
         check("peek: left presses", n_left, 1);
         check("peek: right presses", n_right, 0);
         check("peek released: peek off", dut.u_core.peek, 0);
-
-        // ---- down, then left while down is held: numbers off, one down, no left
-        frames(12);
-        wait_play(12);
-        clear;
-        before_nums = dut.u_core.show_numbers;
-        key[1] = 0; cycles(HOLD);
-        key[2] = 0; cycles(HOLD);
-        key[1] = 1; key[2] = 1; cycles(HOLD);
-        check("numbers chord: down presses", n_down, 1);
-        check("numbers chord: left presses", n_left, 0);
-        check("numbers chord: start presses", n_start, 0);
-        check("numbers chord: no peek", saw_peek, 0);
-        check("numbers chord: numbers flipped", dut.u_core.show_numbers, !before_nums);
 
         // ---- J10: a direction and the start button
         frames(12);
